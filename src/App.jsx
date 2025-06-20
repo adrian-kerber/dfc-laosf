@@ -164,6 +164,7 @@ export default function App() {
         <select value={company} onChange={e=>setCompany(e.target.value)}>
           {COMPANIES.map(c=><option key={c.id} value={c.id}>{c.id} - {c.name}</option>)}
         </select>
+        <h2>Configurações de Agrupadores</h2>
         <AggregatorConfig aggregators={aggregators} setAggregators={setAggregators} />
         <div className="file-upload">
           <input type="file" accept=".xls,.xlsx" onChange={handleFile} />
@@ -230,7 +231,7 @@ export default function App() {
                   <span className="report-total">{formatValue(total)}</span>
                 </div>
                 {expanded[col.id] && (
-                  <ul className="report-list">
+                  <ul className="report-list" style={{ maxHeight: '30vh', overflowY: 'auto' }}>
                     {ids.map(id=>(
                       <li key={id} className="report-item">
                         {accounts[id].name}: {formatValue(accounts[id].sign==='+'?accounts[id].valor:-accounts[id].valor)}
