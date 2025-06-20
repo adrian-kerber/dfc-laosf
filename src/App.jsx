@@ -164,7 +164,6 @@ export default function App() {
         <select value={company} onChange={e=>setCompany(e.target.value)}>
           {COMPANIES.map(c=><option key={c.id} value={c.id}>{c.id} - {c.name}</option>)}
         </select>
-        <h2>Configurações de Agrupadores</h2>
         <AggregatorConfig aggregators={aggregators} setAggregators={setAggregators} />
         <div className="file-upload">
           <input type="file" accept=".xls,.xlsx" onChange={handleFile} />
