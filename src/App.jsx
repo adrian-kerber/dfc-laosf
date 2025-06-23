@@ -57,6 +57,7 @@ export default function App() {
     setAccounts({});
     setExpanded({});
     setShowReport(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company]);
 
   // Salvar agrupadores
@@ -138,19 +139,18 @@ export default function App() {
 
   // Função para formatar valor conforme unidade
   const formatValue = (value) => {
-    switch(unit) {
+    const absValue = value >= 0 ? value : -value;
+    switch (unit) {
       case 'soja':
-        return priceSoy
-          ? `${Math.round(value/parseFloat(priceSoy))} sacas de soja`
-          : '-';
+        if (!priceSoy) return '-';
+        return `${Math.round(absValue / parseFloat(priceSoy)).toLocaleString('pt-BR')} sacas de soja`;
       case 'milho':
-        return priceCorn
-          ? `${Math.round(value/parseFloat(priceCorn))} sacas de milho`
-          : '-';
+        if (!priceCorn) return '-';
+        return `${Math.round(absValue / parseFloat(priceCorn)).toLocaleString('pt-BR')} sacas de milho`;
       case 'suino':
-        return pricePig
-          ? `${Math.round(value/parseFloat(pricePig))} kg suíno`
-          : '-';
+        if (!pricePig) return '-';
+        return `${Math.round(absValue / parseFloat(pricePig)).toLocaleString('pt-BR')} kg suíno`;
+      case 'reais':
       default:
         return `R$ ${value.toLocaleString('pt-BR',{minimumFractionDigits:2})}`;
     }
@@ -186,62 +186,78 @@ export default function App() {
               <option value="milho">Sacas de Milho</option>
               <option value="suino">Kg de Suíno</option>
             </select>
-            {unit==='soja' && (
-              <input
-                type="number"
-                placeholder="Preço saco soja (R$)"
-                value={priceSoy}
-                onChange={e=>setPriceSoy(e.target.value)}
-              />
-            )}
-            {unit==='milho' && (
-              <input
-                type="number"
-                placeholder="Preço saco milho (R$)"
-                value={priceCorn}
-                onChange={e=>setPriceCorn(e.target.value)}
-              />
-            )}
-            {unit==='suino' && (
-              <input
-                type="number"
-                placeholder="Preço kg suíno (R$)"
-                value={pricePig}
-                onChange={e=>setPricePig(e.target.value)}
-              />
-            )}
+            {unit==='soja' && <input type="number" placeholder="Preço saco soja (R$)" value={priceSoy} onChange={e=>setPriceSoy(e.target.value)} />}
+            {unit==='milho'&&<input type="number" placeholder="Preço saco milho (R$)" value={priceCorn} onChange={e=>setPriceCorn(e.target.value)} />}
+            {unit==='suino'&&<input type="number" placeholder="Preço kg suíno (R$)" value={pricePig} onChange={e=>setPricePig(e.target.value)} />}
           </>
         )}
       </div>
 
       {showReport ? (
-        <div className="report-grid">
-          {Object.values(aggregators).map(col=>{
-            const ids = col.id==='unassigned'
-              ? Object.keys(accounts).filter(id=>!Object.values(aggregators)
-                  .filter(a=>a.id!=='unassigned')
-                  .flatMap(a=>a.accountIds)
-                  .includes(id))
-              : col.accountIds.filter(id=>accounts[id]);
-            const total = ids.reduce((sum,id)=> sum + (accounts[id].sign==='+'?accounts[id].valor:-accounts[id].valor), 0);
-            return (
-              <div key={col.id} className="report-section">
-                <div className="report-header" onClick={()=>toggleExpand(col.id)} style={{cursor:'pointer'}}>
-                  <span className="report-title">{col.title}</span>
-                  <span className="report-total">{formatValue(total)}</span>
-                </div>
-                {expanded[col.id] && (
-                  <ul className="report-list" style={{ maxHeight: '30vh', overflowY: 'auto' }}>
-                    {ids.map(id=>(
-                      <li key={id} className="report-item">
-                        {accounts[id].name}: {formatValue(accounts[id].sign==='+'?accounts[id].valor:-accounts[id].valor)}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            );
-          })}
+        <div className="report-list-view">
+          <table className="report-table">
+            <thead>
+              <tr>
+                <th>Agrupador</th>
+                <th>Receita</th>
+                <th>Despesas</th>
+                <th>Resultado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(() => {
+                const aggs = Object.values(aggregators);
+                let totalRec = 0, totalDesp = 0;
+                return aggs.map(col => {
+                  const ids = col.id === 'unassigned'
+                    ? Object.keys(accounts).filter(id => !aggs.filter(a => a.id !== 'unassigned').flatMap(a => a.accountIds).includes(id))
+                    : col.accountIds.filter(id => accounts[id]);
+                  const rec = ids.reduce((s,id) => s + (accounts[id].sign === '+' ? accounts[id].valor : 0), 0);
+                  const desp = ids.reduce((s,id) => s + (accounts[id].sign === '-' ? accounts[id].valor : 0), 0);
+                  const res = rec - desp;
+                  totalRec += rec;
+                  totalDesp += desp;
+                  return (
+                    <React.Fragment key={col.id}>
+                      <tr className="report-header-row" onClick={() => toggleExpand(col.id)} style={{ cursor: 'pointer' }}>
+                        <td>{col.title}</td>
+                        <td style={{ color: 'var(--accent)' }}>{formatValue(rec)}</td>
+                        <td style={{ color: 'var(--danger)' }}>{formatValue(-desp)}</td>
+                        <td style={{ color: res < 0 ? 'var(--danger)' : 'var(--accent)' }}>{formatValue(res)}</td>
+                      </tr>
+                      {expanded[col.id] && ids.map(id => {
+                        const acct = accounts[id];
+                        const recA = acct.sign === '+' ? acct.valor : 0;
+                        const despA = acct.sign === '-' ? acct.valor : 0;
+                        const resA = recA - despA;
+                        return (
+                          <tr key={id} className="report-account-row">
+                            <td style={{ paddingLeft: '20px' }}>{acct.name}</td>
+                            <td style={{ color: 'var(--accent)' }}>{formatValue(recA)}</td>
+                            <td style={{ color: 'var(--danger)' }}>{formatValue(-despA)}</td>
+                            <td style={{ color: resA < 0 ? 'var(--danger)' : 'var(--accent)' }}>{formatValue(resA)}</td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                }).concat(
+                  // totalizador usando formatValue and unit
+                  (() => {
+                    const totRes = totalRec - totalDesp;
+                    return (
+                      <tr key="totalizador" className="report-total-row" style={{ fontWeight: '600' }}>
+                        <td>Totalizador</td>
+                        <td style={{ color: 'var(--accent)' }}>{formatValue(totalRec)}</td>
+                        <td style={{ color: 'var(--danger)' }}>{formatValue(-totalDesp)}</td>
+                        <td style={{ color: totRes < 0 ? 'var(--danger)' : 'var(--accent)' }}>{formatValue(totRes)}</td>
+                      </tr>
+                    );
+                  })()
+                );
+              })()}
+            </tbody>
+          </table>
         </div>
       ) : (
         <DragDropContext onDragEnd={onDragEnd}>
