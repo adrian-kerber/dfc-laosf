@@ -7,10 +7,11 @@ import "./App.css";
 /*
   ==========================================
   App.jsx — DFC (importação + agrupadores)
-  - Lê Excel de balancete detectando colunas por nome
+  >>> Usa APENAS: Conta, Código, Descrição, Débito, Crédito <<<
+  - Detecta cabeçalhos por nome (também aceita "Código Descrição")
   - Normaliza números pt-BR
-  - Permite arrastar contas entre agrupadores
-  - Gera relatório com múltiplas unidades (R$, soja, milho, suíno)
+  - Arrasta contas entre agrupadores
+  - Relatório com conversão de unidade (opcional)
   ==========================================
 */
 
@@ -24,15 +25,12 @@ export default function App() {
   /* =========================
      ESTADO BÁSICO
      ========================= */
-  // Empresa selecionada
   const [company, setCompany] = useState(
     () => localStorage.getItem("dfc-laosf:company") || COMPANIES[0].id
   );
 
-  // Chave dos agrupadores na empresa atual
   const aggKey = `dfc-laosf:${company}:aggregators`;
 
-  // Agrupadores (IDs de conta por agrupador). Sempre mantém "unassigned".
   const [aggregators, setAggregators] = useState(() => {
     const saved = localStorage.getItem(aggKey);
     return saved
@@ -40,11 +38,10 @@ export default function App() {
       : { unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: [] } };
   });
 
-  // Contas carregadas do último upload (mapa id-> {id,name,valor,sign})
-  const [accounts, setAccounts] = useState({});
+  const [accounts, setAccounts] = useState({});  // mapa id-> {id,name,valor,sign}
   const [loading, setLoading] = useState(false);
 
-  // Relatório: visibilidade, expansão e unidade
+  // Relatório
   const [showReport, setShowReport] = useState(false);
   const [expanded, setExpanded] = useState({});
   const [unit, setUnit] = useState("reais"); // 'reais', 'soja', 'milho', 'suino'
@@ -52,15 +49,12 @@ export default function App() {
   const [priceCorn, setPriceCorn] = useState("");
   const [pricePig, setPricePig] = useState("");
 
-  // Ref para resetar o input de arquivo (permite reenviar o mesmo arquivo)
-  const fileInputRef = useRef(null);
+  const fileInputRef = useRef(null); // pra resetar o <input>
 
-  const toggleExpand = (id) => {
-    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
+  const toggleExpand = (id) => setExpanded((p) => ({ ...p, [id]: !p[id] }));
 
   /* =========================
-     EFEITO: troca de empresa
+     TROCA DE EMPRESA
      ========================= */
   useEffect(() => {
     localStorage.setItem("dfc-laosf:company", company);
@@ -77,7 +71,7 @@ export default function App() {
   }, [company]);
 
   /* =========================
-     AÇÕES BÁSICAS
+     AÇÕES
      ========================= */
   const handleSave = () => {
     localStorage.setItem(aggKey, JSON.stringify(aggregators));
@@ -91,19 +85,17 @@ export default function App() {
     }));
   };
 
-  // Drag & Drop entre colunas (agrupadores)
   const onDragEnd = ({ source, destination, draggableId }) => {
     if (!destination) return;
-    if (source.droppableId === destination.droppableId && source.index === destination.index)
-      return;
+    if (source.droppableId === destination.droppableId && source.index === destination.index) return;
 
     const start = aggregators[source.droppableId];
     const finish = aggregators[destination.droppableId];
 
-    const newStart = Array.from(start.accountIds);
+    const newStart = Array.from(start.accountIds || []);
     newStart.splice(source.index, 1);
 
-    const newFinish = Array.from(finish.accountIds);
+    const newFinish = Array.from(finish.accountIds || []);
     newFinish.splice(destination.index, 0, draggableId);
 
     setAggregators((prev) => ({
@@ -123,9 +115,8 @@ export default function App() {
   /* =========================
      HELPERS DE PARSE
      ========================= */
-
-  // Normaliza número pt-BR (pontos como milhar, vírgula como decimal) e aceita number
   const parseBRNumber = (val) => {
+    // aceita number nativo ou string pt-BR
     if (val == null) return 0;
     if (typeof val === "number" && Number.isFinite(val)) return val;
     const s = String(val).trim();
@@ -134,10 +125,11 @@ export default function App() {
     return Number.isFinite(n) ? n : 0;
   };
 
-  // Encontra índice de coluna por nome (usa includes e normalização)
+  const normStr = (x) => String(x || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+  // encontra índice de coluna por "includes" de candidatos
   const findCol = (headerRow, candidates) => {
-    const norm = (x) => String(x || "").toLowerCase().replace(/\s+/g, " ").trim();
-    const H = headerRow.map(norm);
+    const H = headerRow.map(normStr);
     for (let i = 0; i < H.length; i++) {
       const cell = H[i];
       if (!cell) continue;
@@ -146,8 +138,23 @@ export default function App() {
     return -1;
   };
 
+  // tenta separar "Código Descrição" em {codigo, descricao}
+  const splitCodigoDescricao = (value) => {
+    const s = String(value || "").trim();
+    if (!s) return { codigo: "", descricao: "" };
+    // pega prefixo numérico (com pontos) no começo
+    const m = s.match(/^([\d.]+)\s*[-–—:]?\s*(.+)$/);
+    if (m) return { codigo: m[1].trim(), descricao: m[2].trim() };
+    // fallback: primeira palavra numérica vira código
+    const parts = s.split(/\s+/);
+    if (/^[\d.]+$/.test(parts[0] || "")) {
+      return { codigo: parts[0], descricao: s.slice(parts[0].length).trim() };
+    }
+    return { codigo: "", descricao: s };
+  };
+
   /* =========================
-     IMPORTAÇÃO DO EXCEL (ROBUSTA)
+     IMPORTAÇÃO (usa apenas Conta/Código/Descrição/Débito/Crédito)
      ========================= */
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
@@ -158,52 +165,64 @@ export default function App() {
       const data = await file.arrayBuffer();
       const wb = XLSX.read(data, { type: "array" });
 
-      // Usa a primeira aba
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
 
       if (!rows.length) {
-        console.warn("Planilha vazia.");
         alert("Planilha vazia.");
         return;
       }
 
-      // 1) Detecta a linha de cabeçalho procurando por 'conta' + ('débito' e 'crédito') nas primeiras 40 linhas
+      // 1) Localiza linha de cabeçalho procurando pelas colunas-alvo
       let headerIdx = -1;
-      for (let i = 0; i < Math.min(rows.length, 40); i++) {
-        const row = rows[i].map((x) => String(x || "").toLowerCase());
-        const hasConta = row.some((c) => c.includes("conta"));
+      for (let i = 0; i < Math.min(rows.length, 60); i++) {
+        const row = rows[i].map(normStr);
         const hasDeb = row.some((c) => c.includes("débito") || c.includes("debito"));
         const hasCred = row.some((c) => c.includes("crédito") || c.includes("credito"));
-        if (hasConta && hasDeb && hasCred) {
+        const hasConta = row.some((c) => c.includes("conta"));
+        const hasCodigo = row.some((c) => c.includes("código") || c.includes("codigo"));
+        const hasDesc =
+          row.some((c) => c.includes("descrição") || c.includes("descricao")) ||
+          row.some((c) => c.includes("código descrição") || c.includes("codigo descrição"));
+        if (hasDeb && hasCred && (hasConta || hasCodigo) && hasDesc) {
           headerIdx = i;
           break;
         }
       }
       if (headerIdx === -1) {
-        console.warn("Cabeçalho não encontrado.");
-        alert("Não encontrei os cabeçalhos (Conta/Débito/Crédito). Me envie um print da linha de títulos.");
+        alert("Não encontrei cabeçalhos (Conta/Código/Descrição/Débito/Crédito).");
         return;
       }
 
       const header = rows[headerIdx];
 
-      // 2) Índices das colunas relevantes
-      const colConta = findCol(header, ["conta", "código", "codigo"]);
-      const colDesc = findCol(header, ["descrição", "descricao"]);
+      // 2) Descobre índices (suporta "Código Descrição" combinado)
+      const colConta = findCol(header, ["conta"]);
+      let colCodigo = findCol(header, ["código", "codigo"]);
+      let colDescricao = findCol(header, ["descrição", "descricao"]);
+      const colCodDesc = findCol(header, ["código descrição", "codigo descrição"]); // combinado
       const colDeb = findCol(header, ["débito", "debito"]);
       const colCred = findCol(header, ["crédito", "credito"]);
 
-      const required = { colConta, colDesc, colDeb, colCred };
-      for (const [k, v] of Object.entries(required)) {
-        if (v === -1) {
-          console.warn(`Coluna obrigatória ausente: ${k}`);
-          alert(`Não encontrei a coluna obrigatória (${k}).`);
+      // pelo menos Débito e Crédito precisam existir
+      if (colDeb === -1 || colCred === -1) {
+        alert("Cabeçalhos de Débito/Crédito não encontrados.");
+        return;
+      }
+      // precisamos de alguma forma de ID e nome: Conta e (Código+Descrição OU Código Descrição)
+      if (colConta === -1) {
+        // se não houver "Conta", tentamos usar "Código" como ID
+        if (colCodigo === -1 && colCodDesc === -1) {
+          alert("Não encontrei a coluna 'Conta' nem 'Código'.");
           return;
         }
       }
+      if (colDescricao === -1 && colCodDesc === -1) {
+        alert("Não encontrei 'Descrição' (nem 'Código Descrição').");
+        return;
+      }
 
-      // 3) Percorre as linhas de dados após o cabeçalho
+      // 3) Varrer linhas de dados
       const newAcc = {};
       const allIds = [];
 
@@ -211,42 +230,61 @@ export default function App() {
         const row = rows[r];
         if (!row || row.length === 0) continue;
 
-        const rawCode = String(row[colConta] || "").trim();
-        const name = String(row[colDesc] || "").trim();
-        if (!rawCode || !name) continue;
+        // Extrai campos
+        const contaRaw = colConta !== -1 ? String(row[colConta] || "").trim() : "";
+        const codigoRaw = colCodigo !== -1 ? String(row[colCodigo] || "").trim() : "";
+        let descricaoRaw = colDescricao !== -1 ? String(row[colDescricao] || "").trim() : "";
 
-        // Aceita códigos com dígitos e pontos (ex.: 1.1.1.01)
-        const looksLikeAccount = /^[0-9.]+$/.test(rawCode);
-        if (!looksLikeAccount) continue;
+        // Se vier "Código Descrição" num campo único, separamos
+        if (colCodDesc !== -1 && (!codigoRaw || !descricaoRaw)) {
+          const { codigo, descricao } = splitCodigoDescricao(row[colCodDesc]);
+          if (!codigoRaw) colCodigo = colCodigo; // no-op pra satisfazer linter
+          if (!descricaoRaw) descricaoRaw = descricao;
+          // se não houver coluna "Código" dedicada, tentamos usar esse código
+          if (!codigoRaw && codigo) {
+            // apenas se quiser armazenar ou exibir depois
+          }
+        }
 
+        // Determina o ID da conta:
+        // 1) preferimos "Conta" (ex.: 1.1.1.01)
+        // 2) se não houver, usamos "Código"
+        let id = contaRaw || codigoRaw;
+        id = String(id || "").trim();
+        // precisa parecer um código (dígitos e pontos) — evita linhas de subtítulo
+        if (!id || !/^[\d.]+$/.test(id)) continue;
+
+        // Nome/descrição
+        const name =
+          descricaoRaw ||
+          // fallback: se não houver descrição, tenta usar código (pior caso)
+          (codigoRaw ? `Código ${codigoRaw}` : "Sem descrição");
+
+        // Valores
         const deb = parseBRNumber(row[colDeb]);
         const cred = parseBRNumber(row[colCred]);
+        if (deb === 0 && cred === 0) continue; // ignora linha sem movimento
 
-        // Ignora linhas totalmente zeradas
-        if (deb === 0 && cred === 0) continue;
-
-        // Escolha do sinal: aqui considero RESULTADO = CRÉDITO - DÉBITO
-        // Se preferir o contrário (Débito - Crédito), troque a linha abaixo.
+        // ====== REGRA DO RESULTADO ======
+        // Usamos Crédito - Débito (positivo = receita / negativo = despesa)
+        // Se quiser inverter, troque para: const val = deb - cred;
         const val = cred - deb;
 
-        newAcc[rawCode] = {
-          id: rawCode,
+        newAcc[id] = {
+          id,
           name,
           valor: Math.abs(val),
-          sign: val >= 0 ? "+" : "-",
+          sign: val >= 0 ? "+" : "-", // controla em qual coluna (receita/despesa) cai
         };
-        allIds.push(rawCode);
+        allIds.push(id);
       }
 
       if (!allIds.length) {
-        console.warn("Nenhuma conta válida encontrada após o cabeçalho.");
-        alert(
-          "Não encontrei linhas de contas com Débito/Crédito. Confira se os números estão na mesma planilha e colunas corretas."
-        );
+        alert("Não encontrei linhas de contas com Débito/Crédito.");
         return;
       }
 
-      // 4) Atualiza os agrupadores mantendo apenas contas existentes
+      // 4) Atualiza agrupadores mantendo apenas contas existentes
       const upd = {};
       Object.values(aggregators).forEach((agg) => {
         upd[agg.id] = {
@@ -263,17 +301,13 @@ export default function App() {
       setAccounts(newAcc);
       setAggregators(upd);
       setExpanded({});
-      console.log(`Importadas ${allIds.length} contas.`, {
-        cols: { colConta, colDesc, colDeb, colCred },
-      });
       alert(`Importadas ${allIds.length} contas com sucesso.`);
     } catch (err) {
       console.error("Erro ao ler o Excel:", err);
-      alert("Erro ao ler o Excel. Me manda um print da linha de cabeçalhos que eu ajusto o parser.");
+      alert("Erro ao ler o Excel. Se puder, me mande os nomes EXATOS dos cabeçalhos.");
     } finally {
       setLoading(false);
-      // Permite reenviar o mesmo arquivo
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (fileInputRef.current) fileInputRef.current.value = ""; // permite reenviar o mesmo arquivo
     }
   };
 
@@ -292,7 +326,6 @@ export default function App() {
       case "suino":
         if (!pricePig) return "-";
         return `${Math.round(absValue / parseFloat(pricePig)).toLocaleString("pt-BR")} kg suíno`;
-      case "reais":
       default:
         return `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
     }
@@ -303,7 +336,6 @@ export default function App() {
      ========================= */
   return (
     <div className="container">
-      {/* Sidebar com seleção de empresa, config e upload */}
       <div className="sidebar">
         <h1>DFC</h1>
 
@@ -330,16 +362,12 @@ export default function App() {
         </div>
 
         <div className="actions">
-          <button onClick={handleSave} className="btn-save">
-            Salvar
-          </button>
-          <button onClick={clearAll} className="btn-clear">
-            Limpar tudo
-          </button>
+          <button onClick={handleSave} className="btn-save">Salvar</button>
+          <button onClick={clearAll} className="btn-clear">Limpar tudo</button>
           <button
             onClick={() => setShowReport(!showReport)}
             className="btn-save"
-            style={{ marginTop: "8px" }}
+            style={{ marginTop: 8 }}
           >
             {showReport ? "Voltar" : "Mostrar Relatório"}
           </button>
@@ -383,7 +411,6 @@ export default function App() {
         )}
       </div>
 
-      {/* Conteúdo principal: relatório ou board de DnD */}
       {showReport ? (
         <div className="report-list-view">
           <table className="report-table">
@@ -398,12 +425,10 @@ export default function App() {
             <tbody>
               {(() => {
                 const aggs = Object.values(aggregators);
-                let totalRec = 0,
-                  totalDesp = 0;
+                let totalRec = 0, totalDesp = 0;
 
                 return aggs
                   .map((col) => {
-                    // Contas do agrupador (tratando unassigned dinamicamente)
                     const ids =
                       col.id === "unassigned"
                         ? Object.keys(accounts).filter((id) =>
@@ -413,59 +438,33 @@ export default function App() {
                           )
                         : (col.accountIds || []).filter((id) => accounts[id]);
 
-                    const rec = ids.reduce(
-                      (s, id) => s + (accounts[id].sign === "+" ? accounts[id].valor : 0),
-                      0
-                    );
-                    const desp = ids.reduce(
-                      (s, id) => s + (accounts[id].sign === "-" ? accounts[id].valor : 0),
-                      0
-                    );
+                    const rec = ids.reduce((s, id) => s + (accounts[id].sign === "+" ? accounts[id].valor : 0), 0);
+                    const desp = ids.reduce((s, id) => s + (accounts[id].sign === "-" ? accounts[id].valor : 0), 0);
                     const res = rec - desp;
                     totalRec += rec;
                     totalDesp += desp;
 
                     return (
                       <React.Fragment key={col.id}>
-                        <tr
-                          className="report-header-row"
-                          onClick={() => toggleExpand(col.id)}
-                          style={{ cursor: "pointer" }}
-                        >
+                        <tr className="report-header-row" onClick={() => toggleExpand(col.id)} style={{ cursor: "pointer" }}>
                           <td>{col.title}</td>
                           <td style={{ color: "var(--accent)" }}>{formatValue(rec)}</td>
                           <td style={{ color: "var(--danger)" }}>{formatValue(-desp)}</td>
-                          <td
-                            style={{
-                              color: res < 0 ? "var(--danger)" : "var(--accent)",
-                            }}
-                          >
-                            {formatValue(res)}
-                          </td>
+                          <td style={{ color: res < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(res)}</td>
                         </tr>
 
                         {expanded[col.id] &&
                           ids.map((id) => {
-                            const acct = accounts[id];
-                            const recA = acct.sign === "+" ? acct.valor : 0;
-                            const despA = acct.sign === "-" ? acct.valor : 0;
+                            const a = accounts[id];
+                            const recA = a.sign === "+" ? a.valor : 0;
+                            const despA = a.sign === "-" ? a.valor : 0;
                             const resA = recA - despA;
                             return (
                               <tr key={id} className="report-account-row">
-                                <td style={{ paddingLeft: "20px" }}>{acct.name}</td>
-                                <td style={{ color: "var(--accent)" }}>
-                                  {formatValue(recA)}
-                                </td>
-                                <td style={{ color: "var(--danger)" }}>
-                                  {formatValue(-despA)}
-                                </td>
-                                <td
-                                  style={{
-                                    color: resA < 0 ? "var(--danger)" : "var(--accent)",
-                                  }}
-                                >
-                                  {formatValue(resA)}
-                                </td>
+                                <td style={{ paddingLeft: 20 }}>{a.name}</td>
+                                <td style={{ color: "var(--accent)" }}>{formatValue(recA)}</td>
+                                <td style={{ color: "var(--danger)" }}>{formatValue(-despA)}</td>
+                                <td style={{ color: resA < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(resA)}</td>
                               </tr>
                             );
                           })}
@@ -473,29 +472,14 @@ export default function App() {
                     );
                   })
                   .concat(
-                    // Linha totalizadora
                     (() => {
                       const totRes = totalRec - totalDesp;
                       return (
-                        <tr
-                          key="totalizador"
-                          className="report-total-row"
-                          style={{ fontWeight: 600 }}
-                        >
+                        <tr key="totalizador" className="report-total-row" style={{ fontWeight: 600 }}>
                           <td>Totalizador</td>
-                          <td style={{ color: "var(--accent)" }}>
-                            {formatValue(totalRec)}
-                          </td>
-                          <td style={{ color: "var(--danger)" }}>
-                            {formatValue(-totalDesp)}
-                          </td>
-                          <td
-                            style={{
-                              color: totRes < 0 ? "var(--danger)" : "var(--accent)",
-                            }}
-                          >
-                            {formatValue(totRes)}
-                          </td>
+                          <td style={{ color: "var(--accent)" }}>{formatValue(totalRec)}</td>
+                          <td style={{ color: "var(--danger)" }}>{formatValue(-totalDesp)}</td>
+                          <td style={{ color: totRes < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(totRes)}</td>
                         </tr>
                       );
                     })()
@@ -508,7 +492,6 @@ export default function App() {
         <DragDropContext onDragEnd={onDragEnd}>
           <div className="grid">
             {Object.values(aggregators).map((col) => {
-              // Resolve os IDs válidos desta coluna
               let validIds;
               if (col.id === "unassigned") {
                 const assigned = Object.values(aggregators)
@@ -519,10 +502,8 @@ export default function App() {
                 validIds = (col.accountIds || []).filter((id) => accounts[id]);
               }
 
-              // Total da coluna (conta + => soma; conta - => subtrai)
               const total = validIds.reduce(
-                (sum, id) =>
-                  sum + (accounts[id].sign === "+" ? accounts[id].valor : -accounts[id].valor),
+                (sum, id) => sum + (accounts[id].sign === "+" ? accounts[id].valor : -accounts[id].valor),
                 0
               );
 
@@ -546,11 +527,7 @@ export default function App() {
                             >
                               <div className="card-header">
                                 <span className="description">{accounts[acctId].name}</span>
-                                <button
-                                  onClick={() => toggleSign(acctId)}
-                                  className="sign-btn"
-                                  title="Alternar sinal (Receita/Despesa)"
-                                >
+                                <button onClick={() => toggleSign(acctId)} className="sign-btn" title="Alternar sinal">
                                   {accounts[acctId].sign}
                                 </button>
                               </div>
