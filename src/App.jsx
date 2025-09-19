@@ -454,12 +454,6 @@ export default function App() {
         <DataManager onDataChange={loadMonthData} />
 
         <div className="actions">
-          <button onClick={handleSave} className="btn-save">
-            Salvar Agrupadores
-          </button>
-          <button onClick={clearAll} className="btn-clear">
-            Limpar Todos os Dados
-          </button>
           <button
             onClick={() => setShowReport(!showReport)}
             className="btn-save"
