@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { db } from '../lib/database'
 
 export default function ReportFilters({ 
@@ -12,15 +12,7 @@ export default function ReportFilters({
   const [viewMode, setViewMode] = useState('specific') // 'specific' or 'yearly'
   const [loading, setLoading] = useState(false)
 
-  useEffect(() => {
-    loadAvailablePeriods()
-  }, [])
-
-  useEffect(() => {
-    handleFilterChange()
-  }, [viewMode, selectedMonth, selectedYear])
-
-  const loadAvailablePeriods = async () => {
+  const loadAvailablePeriods = useCallback(async () => {
     setLoading(true)
     try {
       const periods = await db.getAvailablePeriods()
@@ -30,9 +22,9 @@ export default function ReportFilters({
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  const handleFilterChange = () => {
+  const handleFilterChange = useCallback(() => {
     if (onFilterChange) {
       onFilterChange({
         viewMode,
@@ -40,7 +32,15 @@ export default function ReportFilters({
         year: selectedYear
       })
     }
-  }
+  }, [onFilterChange, viewMode, selectedMonth, selectedYear])
+
+  useEffect(() => {
+    loadAvailablePeriods()
+  }, [loadAvailablePeriods])
+
+  useEffect(() => {
+    handleFilterChange()
+  }, [handleFilterChange])
 
   const handleViewModeChange = (mode) => {
     setViewMode(mode)

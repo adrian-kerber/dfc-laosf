@@ -5,7 +5,7 @@ export default function DataManager({ onDataChange }) {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
 
-  const showMessage = (msg, isError = false) => {
+  const showMessage = (msg) => {
     setMessage(msg)
     setTimeout(() => setMessage(''), 3000)
   }
@@ -23,7 +23,7 @@ export default function DataManager({ onDataChange }) {
       if (onDataChange) onDataChange()
     } catch (error) {
       console.error('Erro ao salvar dados:', error)
-      showMessage('Erro ao salvar dados: ' + error.message, true)
+      showMessage('Erro ao salvar dados: ' + error.message)
     } finally {
       setLoading(false)
     }
@@ -45,7 +45,7 @@ export default function DataManager({ onDataChange }) {
       if (onDataChange) onDataChange()
     } catch (error) {
       console.error('Erro ao limpar dados:', error)
-      showMessage('Erro ao limpar dados: ' + error.message, true)
+      showMessage('Erro ao limpar dados: ' + error.message)
     } finally {
       setLoading(false)
     }
@@ -83,7 +83,7 @@ export default function DataManager({ onDataChange }) {
       showMessage('Backup exportado com sucesso!')
     } catch (error) {
       console.error('Erro ao exportar dados:', error)
-      showMessage('Erro ao exportar dados: ' + error.message, true)
+      showMessage('Erro ao exportar dados: ' + error.message)
     } finally {
       setLoading(false)
     }

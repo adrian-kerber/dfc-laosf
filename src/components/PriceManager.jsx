@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { db } from '../lib/database'
 
 export default function PriceManager({ 
   selectedMonth, 
   selectedYear, 
-  unit, 
   onPriceChange 
 }) {
   const [prices, setPrices] = useState({
@@ -15,11 +14,7 @@ export default function PriceManager({
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
 
-  useEffect(() => {
-    loadPrices()
-  }, [selectedMonth, selectedYear])
-
-  const loadPrices = async () => {
+  const loadPrices = useCallback(async () => {
     if (!selectedMonth || !selectedYear) return
 
     try {
@@ -42,7 +37,11 @@ export default function PriceManager({
     } catch (error) {
       console.error('Erro ao carregar preços:', error)
     }
-  }
+  }, [selectedMonth, selectedYear, onPriceChange])
+
+  useEffect(() => {
+    loadPrices()
+  }, [loadPrices])
 
   const handlePriceChange = (tipo, valor) => {
     setPrices(prev => ({ ...prev, [tipo]: valor }))
