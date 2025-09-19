@@ -255,10 +255,9 @@ export default function App() {
         if (!id || !/^[\d.]+$/.test(id)) continue;
 
         // Nome/descrição
-        const name =
-          descricaoRaw ||
-          // fallback: se não houver descrição, tenta usar código (pior caso)
-          (codigoRaw ? `Código ${codigoRaw}` : "Sem descrição");
+        // Nome/descrição
+        const name = descricaoRaw || codigoRaw || "Sem descrição";
+
 
         // Valores
         const deb = parseBRNumber(row[colDeb]);
