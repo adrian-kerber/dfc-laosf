@@ -432,8 +432,6 @@ export default function App() {
           onYearChange={setSelectedYear}
           label="Período para Importação"
         />
-
-        <h2>Configurações de Agrupadores</h2>
         <AggregatorConfig 
           aggregators={aggregators} 
           setAggregators={setAggregators}
