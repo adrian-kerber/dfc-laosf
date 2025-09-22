@@ -254,64 +254,56 @@ export default function App() {
       const movimentacoes = [];
 
       for (let r = headerIdx + 1; r < rows.length; r++) {
-        const row = rows[r];
-        if (!row || row.length === 0) continue;
+  const row = rows[r];
+  if (!row || row.length === 0) continue;
 
-        const contaRaw = colConta !== -1 ? String(row[colConta] || "").trim() : "";
-        const codigoRaw = colCodigo !== -1 ? String(row[colCodigo] || "").trim() : "";
-        const descricaoRaw = colDescricao !== -1 ? String(row[colDescricao] || "").trim() : "";
+  // pega o código numérico
+  const codigoRaw = colCodigo !== -1 ? String(row[colCodigo] || "").trim() : "";
+  if (!codigoRaw || !/^\d+$/.test(codigoRaw)) continue; // só aceita números
 
-        let id = (contaRaw || codigoRaw || "").trim();
-        if (!id || !/^[\d.]+$/.test(id)) continue;
+  // esse será o id da conta
+  const id = codigoRaw;
 
-        // Nome: descrição se existir; senão, o próprio código
-        const name = descricaoRaw || codigoRaw || "Sem descrição";
-        const deb = parseBRNumber(row[colDeb]);
-        const cred = parseBRNumber(row[colCred]);
-        if (deb === 0 && cred === 0) continue;
+  // descrição segue igual
+  const descricaoRaw = colDescricao !== -1 ? String(row[colDescricao] || "").trim() : "Sem descrição";
 
-        try {
-          const conta = await db.upsertConta({ id, name });
+  const deb = parseBRNumber(row[colDeb]);
+  const cred = parseBRNumber(row[colCred]);
 
-          movimentacoes.push({
-            idconta: conta.idconta,
-            mes: selectedMonth,
-            ano: selectedYear,
-            debito: deb,
-            credito: cred,
-            idcentrocusto: idCentroCustoDB || null,
-            centroCustoNome: centroCusto?.nome || null,
-            centroCustoCodigo: centroCusto?.id || null
-          });
+  if (deb === 0 && cred === 0) continue;
 
-          const val = cred - deb; // (inverter para deb - cred se quiser)
-          newAccounts[conta.idconta] = {
-            id: conta.idconta,
-            name,
-            valor: Math.abs(val),
-            sign: val >= 0 ? "+" : "-"
-          };
-        } catch (error) {
-          console.error('Erro ao salvar conta:', error);
-          const val = cred - deb;
-          newAccounts[id] = {
-            id,
-            name,
-            valor: Math.abs(val),
-            sign: val >= 0 ? "+" : "-"
-          };
-          movimentacoes.push({
-            idconta: id,
-            mes: selectedMonth,
-            ano: selectedYear,
-            debito: deb,
-            credito: cred,
-            idcentrocusto: idCentroCustoDB || null,
-            centroCustoNome: centroCusto?.nome || null,
-            centroCustoCodigo: centroCusto?.id || null
-          });
-        }
-      }
+  try {
+    // salva conta no banco usando o código como id
+    const conta = await db.upsertConta({ id, name: descricaoRaw });
+
+    // movimentação
+    movimentacoes.push({
+      idconta: conta.idconta,
+      mes: selectedMonth,
+      ano: selectedYear,
+      debito: deb,
+      credito: cred
+    });
+
+    const val = cred - deb;
+    newAccounts[conta.idconta] = {
+      id: conta.idconta,
+      name: descricaoRaw,
+      valor: Math.abs(val),
+      sign: val >= 0 ? "+" : "-"
+    };
+  } catch (error) {
+    console.error('Erro ao salvar conta:', error);
+    const val = cred - deb;
+    newAccounts[id] = {
+      id,
+      name: descricaoRaw,
+      valor: Math.abs(val),
+      sign: val >= 0 ? "+" : "-"
+    };
+  }
+}
+
 
       // Persistência
       try {
