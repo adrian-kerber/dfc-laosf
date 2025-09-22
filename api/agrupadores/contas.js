@@ -4,67 +4,63 @@ export const config = { runtime: 'edge' };
 
 const sql = neon(process.env.DATABASE_URL);
 
+async function ensureTables() {
+  // mapeamento GLOBAL conta → agrupador
+  await sql`
+    CREATE TABLE IF NOT EXISTS conta_agrupador (
+      id SERIAL PRIMARY KEY,
+      idconta VARCHAR(50) NOT NULL UNIQUE,
+      idagrupador INTEGER NULL
+    )
+  `;
+}
+
 export default async function handler(req) {
   try {
-    const url = new URL(req.url);
+    await ensureTables();
 
     if (req.method === 'GET') {
-      const mes = url.searchParams.get('mes');
-      const ano = url.searchParams.get('ano');
-
-      let rows;
-      if (mes && ano) {
-        rows = await sql`
-          SELECT ac.*, a.nome AS agrupador_nome, c.nome AS conta_nome, c.idconta
-          FROM agrupador_contas ac
-            JOIN agrupadores a ON ac.idagrupador = a.idagrupador
-            JOIN contas c       ON ac.idconta     = c.idconta
-          WHERE ac.mes = ${Number(mes)} AND ac.ano = ${Number(ano)}
-          ORDER BY a.nome, c.idconta`;
-      } else {
-        rows = await sql`
-          SELECT ac.*, a.nome AS agrupador_nome, c.nome AS conta_nome, c.idconta
-          FROM agrupador_contas ac
-            JOIN agrupadores a ON ac.idagrupador = a.idagrupador
-            JOIN contas c       ON ac.idconta     = c.idconta
-          ORDER BY a.nome, c.idconta`;
-      }
+      const rows = await sql`
+        SELECT idconta, idagrupador
+        FROM conta_agrupador
+        ORDER BY idconta
+      `;
       return Response.json(rows ?? [], { status: 200 });
     }
 
     if (req.method === 'POST') {
       const body = await req.json();
-      const mes = Number(body?.mes);
-      const ano = Number(body?.ano);
-      const associations = Array.isArray(body?.associations) ? body.associations : [];
 
-      if (!mes || !ano) {
-        return Response.json({ error: 'mes/ano inválidos' }, { status: 400 });
+      // Aceita os DOIS formatos:
+      //  A) { associations: [{ idconta, idagrupador|null }, ...] }
+      //  B) { associations: [...], mes, ano }  ← legado (mes/ano serão ignorados)
+      const list = Array.isArray(body.associations) ? body.associations : [];
+
+      // Validação leve
+      for (const a of list) {
+        if (typeof a.idconta !== 'string' || a.idconta.trim() === '') {
+          return Response.json({ error: 'idconta inválido' }, { status: 400 });
+        }
+        if (a.idagrupador != null && Number.isNaN(Number(a.idagrupador))) {
+          return Response.json({ error: 'idagrupador inválido' }, { status: 400 });
+        }
       }
 
-      // Limpa vínculos do período
-      await sql`DELETE FROM agrupador_contas WHERE mes = ${mes} AND ano = ${ano}`;
-
-      // Insere vínculos
-      let inserted = 0;
-      for (const a of associations) {
-        const idagrupador = Number(a.idagrupador);
-        const idconta = String(a.idconta);
-        if (!idagrupador || !idconta) continue;
-
+      // Zera e regrava o mapeamento global atual
+      await sql`TRUNCATE TABLE conta_agrupador`;
+      for (const a of list) {
         await sql`
-          INSERT INTO agrupador_contas (idagrupador, idconta, mes, ano)
-          VALUES (${idagrupador}, ${idconta}, ${mes}, ${ano})
-          ON CONFLICT (idagrupador, idconta, mes, ano) DO NOTHING`;
-        inserted++;
+          INSERT INTO conta_agrupador (idconta, idagrupador)
+          VALUES (${a.idconta}, ${a.idagrupador == null ? null : Number(a.idagrupador)})
+        `;
       }
 
-      return Response.json({ ok: true, inserted }, { status: 200 });
+      return Response.json({ ok: true, saved: list.length }, { status: 200 });
     }
 
     return new Response('Method Not Allowed', { status: 405 });
   } catch (e) {
     console.error(e);
-    return Response.json({ error: e.message }, { status: 500 });
+    return Response.json({ error: e.message || String(e) }, { status: 500 });
   }
 }

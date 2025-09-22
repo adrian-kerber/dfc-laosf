@@ -1,16 +1,15 @@
-// /api/agrupadores/contas.js
+// /api/contas.js
 import { neon } from '@neondatabase/serverless';
 export const config = { runtime: 'edge' };
 
 const sql = neon(process.env.DATABASE_URL);
 
-// garante a tabela de mapeamento global
 async function ensureTables() {
   await sql`
-    CREATE TABLE IF NOT EXISTS conta_agrupador (
-      id SERIAL PRIMARY KEY,
-      idconta VARCHAR(50) NOT NULL UNIQUE,
-      idagrupador INTEGER NULL
+    CREATE TABLE IF NOT EXISTS contas (
+      idconta VARCHAR(50) PRIMARY KEY,
+      nome    VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
   `;
 }
@@ -20,38 +19,23 @@ export default async function handler(req) {
     await ensureTables();
 
     if (req.method === 'GET') {
-      const rows = await sql`
-        SELECT idconta, idagrupador
-        FROM conta_agrupador
-        ORDER BY idconta
-      `;
+      const rows = await sql`SELECT * FROM contas ORDER BY idconta`;
       return Response.json(rows ?? [], { status: 200 });
     }
 
     if (req.method === 'POST') {
-      const body = await req.json();
-      const list = Array.isArray(body.associations) ? body.associations : [];
-
-      // validações simples
-      for (const a of list) {
-        if (typeof a.idconta !== 'string' || a.idconta.trim() === '') {
-          return Response.json({ error: 'idconta inválido' }, { status: 400 });
-        }
-        if (a.idagrupador != null && Number.isNaN(Number(a.idagrupador))) {
-          return Response.json({ error: 'idagrupador inválido' }, { status: 400 });
-        }
+      const { id, name } = await req.json();
+      if (!id || !String(id).trim()) {
+        return Response.json({ error: 'id inválido' }, { status: 400 });
       }
-
-      // zera e regrava o mapeamento global atual
-      await sql`TRUNCATE TABLE conta_agrupador`;
-      for (const a of list) {
-        await sql`
-          INSERT INTO conta_agrupador (idconta, idagrupador)
-          VALUES (${a.idconta}, ${a.idagrupador == null ? null : Number(a.idagrupador)})
-        `;
-      }
-
-      return Response.json({ ok: true, saved: list.length }, { status: 200 });
+      const nome = (name ?? '').trim() || `Conta ${id}`;
+      const rows = await sql`
+        INSERT INTO contas (idconta, nome)
+        VALUES (${String(id)}, ${nome})
+        ON CONFLICT (idconta) DO UPDATE SET nome = ${nome}
+        RETURNING *
+      `;
+      return Response.json(rows?.[0] ?? null, { status: 200 });
     }
 
     return new Response('Method Not Allowed', { status: 405 });

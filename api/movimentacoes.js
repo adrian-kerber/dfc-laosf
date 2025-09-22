@@ -4,114 +4,113 @@ export const config = { runtime: 'edge' };
 
 const sql = neon(process.env.DATABASE_URL);
 
+async function ensureTables() {
+  // contas
+  await sql`
+    CREATE TABLE IF NOT EXISTS contas (
+      idconta VARCHAR(50) PRIMARY KEY,
+      nome    VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `;
+
+  // movimentacoes (sem delete por mes/ano; permite múltiplos CC)
+  await sql`
+    CREATE TABLE IF NOT EXISTS movimentacoes (
+      idmov SERIAL PRIMARY KEY,
+      idconta VARCHAR(50) REFERENCES contas(idconta) ON DELETE CASCADE,
+      mes INTEGER NOT NULL CHECK (mes >= 1 AND mes <= 12),
+      ano INTEGER NOT NULL,
+      debito DECIMAL(15,2) DEFAULT 0,
+      credito DECIMAL(15,2) DEFAULT 0,
+      idcentrocusto INTEGER,
+      centrocusto_nome VARCHAR(255),
+      centrocusto_codigo VARCHAR(50),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `;
+}
+
+function toInt(x) {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+
 export default async function handler(req) {
   try {
-    const url = new URL(req.url);
-    const method = req.method;
+    await ensureTables();
 
-    if (method === 'GET') {
-      const mes  = url.searchParams.get('mes'); // "1".."12" ou null
-      const ano  = url.searchParams.get('ano'); // "2025" ou null
-      const cc   = url.searchParams.get('cc');  // id centro de custo ou null
+    if (req.method === 'GET') {
+      const url = new URL(req.url);
+      const mes  = url.searchParams.get('mes');
+      const ano  = url.searchParams.get('ano');
+      const cc   = url.searchParams.get('centro'); // opcional
 
-      const m = mes != null ? Number(mes) : null;
-      const a = ano != null ? Number(ano) : null;
-      const c = cc  != null ? Number(cc)  : null;
+      let where = [];
+      let params = [];
 
-      let rows;
-
-      // 1) Nenhum filtro
-      if (a == null && m == null && c == null) {
-        rows = await sql`
-          SELECT m.*, ctas.nome, ctas.idconta AS codigo
-          FROM movimentacoes m
-          JOIN contas ctas ON m.idconta = ctas.idconta
-          ORDER BY ctas.idconta, m.ano, m.mes
-        `;
+      if (ano != null) {
+        where.push(sql`m.ano = ${toInt(ano)}`);
       }
-      // 2) Só ano
-      else if (a != null && m == null && c == null) {
-        rows = await sql`
-          SELECT m.*, ctas.nome, ctas.idconta AS codigo
-          FROM movimentacoes m
-          JOIN contas ctas ON m.idconta = ctas.idconta
-          WHERE m.ano = ${a}
-          ORDER BY ctas.idconta, m.mes
-        `;
+      if (mes != null) {
+        where.push(sql`m.mes = ${toInt(mes)}`);
       }
-      // 3) Ano + mês
-      else if (a != null && m != null && c == null) {
-        rows = await sql`
-          SELECT m.*, ctas.nome, ctas.idconta AS codigo
-          FROM movimentacoes m
-          JOIN contas ctas ON m.idconta = ctas.idconta
-          WHERE m.ano = ${a} AND m.mes = ${m}
-          ORDER BY ctas.idconta
-        `;
-      }
-      // 4) Ano + CC (todos os meses)
-      else if (a != null && m == null && c != null) {
-        rows = await sql`
-          SELECT m.*, ctas.nome, ctas.idconta AS codigo
-          FROM movimentacoes m
-          JOIN contas ctas ON m.idconta = ctas.idconta
-          WHERE m.ano = ${a} AND m.idcentrocusto = ${c}
-          ORDER BY ctas.idconta, m.mes
-        `;
-      }
-      // 5) Ano + mês + CC
-      else if (a != null && m != null && c != null) {
-        rows = await sql`
-          SELECT m.*, ctas.nome, ctas.idconta AS codigo
-          FROM movimentacoes m
-          JOIN contas ctas ON m.idconta = ctas.idconta
-          WHERE m.ano = ${a} AND m.mes = ${m} AND m.idcentrocusto = ${c}
-          ORDER BY ctas.idconta
-        `;
-      }
-      // 6) CC sem ano (evita erro, mas retorna todos anos daquele CC)
-      else if (a == null && c != null && m == null) {
-        rows = await sql`
-          SELECT m.*, ctas.nome, ctas.idconta AS codigo
-          FROM movimentacoes m
-          JOIN contas ctas ON m.idconta = ctas.idconta
-          WHERE m.idcentrocusto = ${c}
-          ORDER BY ctas.idconta, m.ano, m.mes
-        `;
-      }
-      // 7) fallback
-      else {
-        rows = await sql`
-          SELECT m.*, ctas.nome, ctas.idconta AS codigo
-          FROM movimentacoes m
-          JOIN contas ctas ON m.idconta = ctas.idconta
-          ORDER BY ctas.idconta, m.ano, m.mes
-        `;
+      if (cc != null && cc !== 'all') {
+        where.push(sql`m.idcentrocusto = ${toInt(cc)}`);
       }
 
+      const cond = where.length
+        ? sql`WHERE ${where.reduce((acc, w, i) => i ? sql`${acc} AND ${w}` : w)}`
+        : sql``;
+
+      const rows = await sql`
+        SELECT m.*, c.nome, c.idconta AS codigo
+        FROM movimentacoes m
+        JOIN contas c ON m.idconta = c.idconta
+        ${cond}
+        ORDER BY c.idconta, m.ano, m.mes, m.idmov
+      `;
       return Response.json(rows ?? [], { status: 200 });
     }
 
-    if (method === 'POST') {
+    if (req.method === 'POST') {
       const body = await req.json();
-      const mes = Number(body.mes);
-      const ano = Number(body.ano);
+      const mes = toInt(body.mes);
+      const ano = toInt(body.ano);
       const movs = Array.isArray(body.movimentacoes) ? body.movimentacoes : [];
 
-      // INSERÇÃO EM LOTE — sem deletar nada
-      for (const mov of movs) {
+      if (!mes || !ano) {
+        return Response.json({ error: 'mes/ano inválidos' }, { status: 400 });
+      }
+
+      // NÃO apagar por mês/ano — pode haver múltiplos CC no mesmo período.
+      // Apenas grava novas linhas.
+
+      // Segurança: garante que TODAS as contas existem para não quebrar a FK
+      const ids = [...new Set(movs.map(m => String(m.idconta)))];
+      for (const id of ids) {
+        // se não existir, cria com nome provisório
+        await sql`
+          INSERT INTO contas (idconta, nome)
+          VALUES (${id}, ${'Conta ' + id})
+          ON CONFLICT (idconta) DO NOTHING
+        `;
+      }
+
+      // Insere movimentações
+      for (const m of movs) {
         await sql`
           INSERT INTO movimentacoes
             (idconta, mes, ano, debito, credito, idcentrocusto, centrocusto_nome, centrocusto_codigo)
           VALUES
-            (${mov.idconta},
-             ${mes},
-             ${ano},
-             ${mov.debito || 0},
-             ${mov.credito || 0},
-             ${mov.idcentrocusto ?? null},
-             ${mov.centrocusto_nome ?? null},
-             ${mov.centrocusto_codigo ?? null})
+            (${String(m.idconta)},
+             ${toInt(mes)},
+             ${toInt(ano)},
+             ${Number(m.debito || 0)},
+             ${Number(m.credito || 0)},
+             ${m.idcentrocusto == null ? null : toInt(m.idcentrocusto)},
+             ${m.centroCustoNome ?? m.centrocusto_nome ?? null},
+             ${m.centroCustoCodigo ?? m.centrocusto_codigo ?? null})
         `;
       }
 
