@@ -1,110 +1,89 @@
-// /src/lib/database.js (CLIENTE) — só chama API, não usa sql aqui.
-const j = (r) => {
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
-};
+// /src/lib/database.js
+const j = (r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); };
 
 export const db = {
-  // =========================
-  // CONTAS
-  // =========================
-  async getContas() {
-    return fetch("/api/contas").then(j);
+  // Contas
+  getContas() {
+    return fetch('/api/contas').then(j);
   },
-
-  async upsertConta({ id, name }) {
-    return fetch("/api/contas", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, name }),
+  upsertConta({ id, name }) {
+    return fetch('/api/contas', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, name })
     }).then(j);
   },
 
-  // =========================
-  // MOVIMENTAÇÕES
-  // =========================
- async saveMovimentacoes(movimentacoes, mes, ano) {
-  return fetch('/api/movimentacoes', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ movimentacoes, mes, ano })
-  }).then(j);
-},
-
-async getMovimentacoes(mes, ano) {
-  const qs = new URLSearchParams();
-  if (mes) qs.set('mes', mes);
-  if (ano) qs.set('ano', ano);
-  return fetch(`/api/movimentacoes?${qs}`).then(j);
-},
-
-
-  // =========================
-  // AGRUPADORES
-  // =========================
-  async getAgrupadores() {
-    return fetch("/api/agrupadores").then(j);
+  // Movimentações
+  getMovimentacoes(mes = null, ano = null) {
+    const qs = new URLSearchParams();
+    if (mes != null) qs.set('mes', mes);
+    if (ano != null) qs.set('ano', ano);
+    const url = qs.toString() ? `/api/movimentacoes?${qs}` : '/api/movimentacoes';
+    return fetch(url).then(j);
+  },
+  saveMovimentacoes(movimentacoes, mes, ano) {
+    return fetch('/api/movimentacoes', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ movimentacoes, mes, ano })
+    }).then(j);
   },
 
-  async getAgrupadorContas(mes, ano) {
-    const qs = new URLSearchParams({ mes, ano });
+  // Agrupadores
+  getAgrupadores() {
+    return fetch('/api/agrupadores').then(j);
+  },
+  createAgrupador(nome) {
+    return fetch('/api/agrupadores', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nome })
+    }).then(j);
+  },
+  renameAgrupador(id, nome) {
+    return fetch('/api/agrupadores', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, nome })
+    }).then(j);
+  },
+  deleteAgrupador(id) {
+    const qs = new URLSearchParams({ id });
+    return fetch(`/api/agrupadores?${qs}`, { method: 'DELETE' }).then(j);
+  },
+
+  // Ligações Agrupador-Contas
+  getAgrupadorContas(mes, ano) {
+    const qs = new URLSearchParams();
+    if (mes != null) qs.set('mes', mes);
+    if (ano != null) qs.set('ano', ano);
     return fetch(`/api/agrupadores/contas?${qs}`).then(j);
   },
-
-  async saveAgrupadorContas(associations, mes, ano) {
-    return fetch("/api/agrupadores/contas", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ associations, mes, ano }),
+  saveAgrupadorContas(associations, mes, ano) {
+    // Garanta que idagrupador é NUMÉRICO aqui
+    const payload = {
+      associations: associations.map(a => ({
+        idagrupador: Number(a.idagrupador),
+        idconta: String(a.idconta)
+      })),
+      mes, ano
+    };
+    return fetch('/api/agrupadores/contas', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
     }).then(j);
   },
 
-  // =========================
-  // PREÇOS
-  // =========================
-  async savePreco(tipo, preco, mes, ano) {
-    return fetch("/api/precos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tipo, preco, mes, ano }),
+  // Centros de custo
+  getCentrosCusto() {
+    return fetch('/api/centros-custo').then(j);
+  },
+  upsertCentroCusto({ codigo, nome }) {
+    return fetch('/api/centros-custo', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codigo, nome })
     }).then(j);
   },
 
-  async getPrecos(mes, ano) {
-    const qs = new URLSearchParams();
-    if (mes) qs.set("mes", mes);
-    if (ano) qs.set("ano", ano);
-    return fetch(`/api/precos?${qs}`).then(j);
-  },
-
-  // =========================
-  // CENTROS DE CUSTO
-  // =========================
-  async upsertCentroCusto({ codigo, nome }) {
-    return fetch("/api/centros-custo", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ codigo, nome }),
-    }).then(j);
-  },
-
-  async getCentrosCusto() {
-    return fetch("/api/centros-custo").then(j);
-  },
-
-  // =========================
-  // ADMIN / LIMPEZA
-  // =========================
- async clearAllData() {
-  return fetch('/api/admin/clear', { method: 'POST' }).then(j);
-},
-
-  async getAvailablePeriods() {
-    // idem — rota /api/periods
-    return [];
-  },
-
-  async syncAgrupadorToAllMonths() {
-    // opcional: mover p/ server
+  // Limpeza (admin)
+  clearAllData() {
+    return fetch('/api/admin/clear', { method: 'POST' }).then(j);
   },
 };
