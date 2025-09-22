@@ -1,28 +1,39 @@
-// pages/api/centros_custo.js
-import { sql } from "@vercel/postgres";
+// /pages/api/centros-custo.js
+import { neon } from "@neondatabase/serverless";
+export const config = { runtime: "edge" };
 
-export default async function handler(req, res) {
+const sql = neon(process.env.DATABASE_URL);
+
+export default async function handler(req) {
   try {
-    switch (req.method) {
-      case "GET": {
-        const { rows } = await sql`SELECT * FROM centros_custo ORDER BY idcentrocusto`;
-        return res.status(200).json(rows);
-      }
-      case "POST": {
-        const { codigo, nome } = req.body;
-        const { rows } = await sql`
-          INSERT INTO centros_custo (codigo, nome)
-          VALUES (${codigo}, ${nome})
-          ON CONFLICT (codigo) DO UPDATE SET nome = EXCLUDED.nome
-          RETURNING *;
-        `;
-        return res.status(200).json(rows[0]);
-      }
-      default:
-        return res.status(405).json({ error: "Method not allowed" });
+    if (req.method === "GET") {
+      // lista todos os centros de custo
+      const rows = await sql`SELECT * FROM centros_custo ORDER BY nome`;
+      return Response.json(rows ?? [], { status: 200 });
     }
-  } catch (err) {
-    console.error("Erro centros_custo:", err);
-    return res.status(500).json({ error: err.message });
+
+    if (req.method === "POST") {
+      const body = await req.json();
+      const codigo = body.codigo ? String(body.codigo).trim() : null;
+      const nome = body.nome ? String(body.nome).trim() : null;
+
+      if (!nome) {
+        return Response.json({ error: "Nome é obrigatório" }, { status: 400 });
+      }
+
+      const rows = await sql`
+        INSERT INTO centros_custo (codigo, nome)
+        VALUES (${codigo}, ${nome})
+        ON CONFLICT (codigo) DO UPDATE SET nome = ${nome}
+        RETURNING *
+      `;
+
+      return Response.json(rows?.[0] ?? null, { status: 200 });
+    }
+
+    return new Response("Method Not Allowed", { status: 405 });
+  } catch (e) {
+    console.error("Erro em /api/centros-custo:", e);
+    return Response.json({ error: e.message }, { status: 500 });
   }
 }
