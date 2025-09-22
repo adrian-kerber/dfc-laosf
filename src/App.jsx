@@ -5,7 +5,7 @@ import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import AggregatorConfig from "./components/AggregatorConfig";
 import MonthYearSelector from "./components/MonthYearSelector";
 import DataManager from "./components/DataManager";
-// import ReportFilters from "./components/ReportFilters"; // (removido - filtros inline)
+// import ReportFilters from "./components/ReportFilters"; // filtros agora são inline e globais
 import PriceManager from "./components/PriceManager";
 import { db } from "./lib/database";
 import "./App.css";
@@ -59,7 +59,7 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
-  // Período de visualização (Relatórios)
+  // Período de visualização (Relatórios/Grupos) — filtros globais
   const saved = readSavedFilters();
   const [currentMonth, setCurrentMonth] = useState(
     saved?.month ?? new Date().getMonth() + 1
@@ -479,9 +479,88 @@ export default function App() {
           ))}
         </div>
 
-        {/* Sidebar por aba */}
+        {/* ====== FILTROS GLOBAIS (sempre visíveis) ====== */}
+        <h2>Filtros do Relatório</h2>
+
+        {/* Mês */}
+        <label className="label">Mês</label>
+        <select
+          value={String(reportFilters.month)}
+          onChange={(e) => {
+            const v = e.target.value === "all" ? ALL : Number(e.target.value);
+            setReportFilters((p) => ({ ...p, month: v }));
+            if (v !== ALL) setCurrentMonth(v);
+          }}
+        >
+          <option value="all">Todos os meses</option>
+          {MONTHS_PT.map((m, i) => (
+            <option key={i + 1} value={i + 1}>
+              {m}
+            </option>
+          ))}
+        </select>
+
+        {/* Ano */}
+        <label className="label" style={{ marginTop: 8 }}>
+          Ano
+        </label>
+        <select
+          value={reportFilters.year}
+          onChange={(e) => {
+            const y = Number(e.target.value);
+            setReportFilters((p) => ({ ...p, year: y }));
+            setCurrentYear(y);
+          }}
+        >
+          {Array.from({ length: 10 }, (_, k) => new Date().getFullYear() - 5 + k).map(
+            (y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            )
+          )}
+        </select>
+
+        {/* Centro de Custo */}
+        <label className="label" style={{ marginTop: 8 }}>
+          Centro de Custo
+        </label>
+        <select
+          value={String(reportFilters.costCenter)}
+          onChange={(e) => {
+            const cc = e.target.value === "all" ? ALL : e.target.value;
+            setReportFilters((p) => ({ ...p, costCenter: cc }));
+            setCurrentCostCenter(cc);
+          }}
+        >
+          <option value="all">Todos os Centros</option>
+          {costCenters.map((cc) => (
+            <option key={cc.idcentrocusto} value={cc.idcentrocusto}>
+              {cc.codigo ? `${cc.codigo} - ` : ""}{cc.nome}
+            </option>
+          ))}
+        </select>
+
+        {/* Unidade e preços – sempre aqui também */}
+        <h2 style={{ marginTop: 12 }}>Unidade de Medida</h2>
+        <select value={unit} onChange={(e) => setUnit(e.target.value)}>
+          <option value="reais">Reais (R$)</option>
+          <option value="soja">Sacas de Soja</option>
+          <option value="milho">Sacas de Milho</option>
+          <option value="suino">Kg de Suíno</option>
+        </select>
+        {unit !== "reais" && (
+          <PriceManager
+            selectedMonth={reportFilters.month === ALL ? null : currentMonth}
+            selectedYear={currentYear}
+            onPriceChange={setCurrentPrices}
+          />
+        )}
+
+        {/* ====== Conteúdo específico de cada aba abaixo ====== */}
         {activeView === "import" && (
           <>
+            <hr className="sidebar-sep" />
             <MonthYearSelector
               selectedMonth={selectedMonth}
               selectedYear={selectedYear}
@@ -508,6 +587,7 @@ export default function App() {
 
         {activeView === "groups" && (
           <>
+            <hr className="sidebar-sep" />
             <AggregatorConfig
               aggregators={aggregators}
               onChanged={loadMonthData} // recarrega do DB após criar/renomear
@@ -515,86 +595,6 @@ export default function App() {
             <button onClick={handleSaveGroups} className="btn-save">
               Salvar agrupadores
             </button>
-          </>
-        )}
-
-        {activeView === "reports" && (
-          <>
-            <h2>Filtros do Relatório</h2>
-
-            {/* Mês */}
-            <label className="label">Mês</label>
-            <select
-              value={String(reportFilters.month)}
-              onChange={(e) => {
-                const v = e.target.value === "all" ? ALL : Number(e.target.value);
-                setReportFilters((p) => ({ ...p, month: v }));
-                if (v !== ALL) setCurrentMonth(v);
-              }}
-            >
-              <option value="all">Todos os meses</option>
-              {MONTHS_PT.map((m, i) => (
-                <option key={i + 1} value={i + 1}>
-                  {m}
-                </option>
-              ))}
-            </select>
-
-            {/* Ano */}
-            <label className="label" style={{ marginTop: 8 }}>
-              Ano
-            </label>
-            <select
-              value={reportFilters.year}
-              onChange={(e) => {
-                const y = Number(e.target.value);
-                setReportFilters((p) => ({ ...p, year: y }));
-                setCurrentYear(y);
-              }}
-            >
-              {Array.from({ length: 10 }, (_, k) => new Date().getFullYear() - 5 + k).map(
-                (y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                )
-              )}
-            </select>
-
-            {/* Centro de Custo */}
-            <label className="label" style={{ marginTop: 8 }}>
-              Centro de Custo
-            </label>
-            <select
-              value={String(reportFilters.costCenter)}
-              onChange={(e) => {
-                const cc = e.target.value === "all" ? ALL : e.target.value;
-                setReportFilters((p) => ({ ...p, costCenter: cc }));
-                setCurrentCostCenter(cc);
-              }}
-            >
-              <option value="all">Todos os Centros</option>
-              {costCenters.map((cc) => (
-                <option key={cc.idcentrocusto} value={cc.idcentrocusto}>
-                  {cc.codigo ? `${cc.codigo} - ` : ""}{cc.nome}
-                </option>
-              ))}
-            </select>
-
-            <h2 style={{ marginTop: 12 }}>Unidade de Medida</h2>
-            <select value={unit} onChange={(e) => setUnit(e.target.value)}>
-              <option value="reais">Reais (R$)</option>
-              <option value="soja">Sacas de Soja</option>
-              <option value="milho">Sacas de Milho</option>
-              <option value="suino">Kg de Suíno</option>
-            </select>
-            {unit !== "reais" && (
-              <PriceManager
-                selectedMonth={reportFilters.month === ALL ? null : currentMonth}
-                selectedYear={currentYear}
-                onPriceChange={setCurrentPrices}
-              />
-            )}
           </>
         )}
       </div>
