@@ -1,18 +1,32 @@
-// /api/agrupadores/index.js
-import { sql } from '../_db';
-export default async function handler(req,res){
-  try{
-    if(req.method==='GET'){
+import { neon } from '@neondatabase/serverless';
+export const config = { runtime: 'edge' };
+
+export default async function handler(req) {
+  try {
+    const url = process.env.DATABASE_URL;
+    if (!url) return Response.json({ error: 'DATABASE_URL missing' }, { status: 500 });
+    const sql = neon(url);
+
+    if (req.method === 'GET') {
+      // Se a tabela ainda não existir, vai dar erro de SQL (e veremos o texto)
       const rows = await sql`SELECT * FROM agrupadores ORDER BY nome`;
-      return res.status(200).json(rows ?? []);
+      return Response.json(rows ?? [], { status: 200 });
     }
-    if(req.method==='POST'){
-      const body = await parse(req);
-      const [row] = await sql`
-        INSERT INTO agrupadores (nome) VALUES (${body.nome}) RETURNING *`;
-      return res.status(200).json(row);
+
+    if (req.method === 'POST') {
+      const body = await req.json().catch(() => ({}));
+      const { nome } = body || {};
+      if (!nome || typeof nome !== 'string') {
+        return Response.json({ error: 'nome obrigatório' }, { status: 400 });
+      }
+      const rows = await sql`
+        INSERT INTO agrupadores (nome) VALUES (${nome}) RETURNING *`;
+      return Response.json(rows?.[0] ?? null, { status: 200 });
     }
-    res.status(405).end();
-  }catch(e){ console.error(e); res.status(500).json({error:e.message}); }
+
+    return new Response('Method Not Allowed', { status: 405 });
+  } catch (e) {
+    // Aqui, se for erro SQL (ex. tabela não existe), a mensagem aparece no JSON
+    return Response.json({ error: String(e) }, { status: 500 });
+  }
 }
-async function parse(req){ const ch=[]; for await(const c of req) ch.push(c); return JSON.parse(Buffer.concat(ch).toString('utf8')||'{}'); }
