@@ -477,7 +477,7 @@ export default function App() {
             </div>
 
             <DataManager onDataChange={loadMonthData} />
-            <button onClick={clearAll} className="btn-clear">
+            <button onClick={clearAllData} className="btn-clear">
               Limpar tudo
             </button>
           </>
