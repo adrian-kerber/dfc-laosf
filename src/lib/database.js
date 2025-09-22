@@ -3,8 +3,8 @@ import { neon } from '@neondatabase/serverless'
 // Configuração do Neon Database via Vercel
 const getDatabaseUrl = () => {
   // Para desenvolvimento (Vite)
-  if (import.meta.env?.VITE_DATABASE_URL) {
-    return import.meta.env.VITE_DATABASE_URL
+  if (import.meta.env?.POSTGRES_URL) {
+    return import.meta.env.POSTGRES_URL
   }
   
   // Para produção (Vercel/Node.js) - usando globalThis para evitar erro do ESLint
