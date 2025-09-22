@@ -439,9 +439,10 @@ export default function App() {
         {activeView === "groups" && (
           <>
             <AggregatorConfig
-              aggregators={aggregators}
-              setAggregators={setAggregators}
-            />
+  aggregators={aggregators}
+  onChanged={loadMonthData}   // <- recarrega os agrupadores do DB depois de criar/renomear
+/>
+
             <button onClick={handleSaveGroups} className="btn-save">
               Salvar agrupadores
             </button>

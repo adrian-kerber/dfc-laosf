@@ -1,74 +1,94 @@
-// src/components/AggregatorConfig.jsx
 import React, { useState } from "react";
+import { db } from "../lib/database";
 
-export default function AggregatorConfig({ aggregators, setAggregators }) {
-  const [newTitle, setNewTitle] = useState("");
+/**
+ * Mostra a lista de agrupadores e permite:
+ * - Criar (grava em DB)
+ * - Renomear (grava em DB)
+ * - (Opcional) Deletar (grava em DB) – só inclua se quiser expor no app
+ *
+ * Props:
+ * - aggregators: { [id]: { id, title, accountIds } } (já carregado do DB pelo App)
+ * - onChanged: () => void   -> chame para o App recarregar do DB após alterações
+ */
+export default function AggregatorConfig({ aggregators, onChanged }) {
+  const [novoNome, setNovoNome] = useState("");
+  const [renomearId, setRenomearId] = useState("");
+  const [renomearNome, setRenomearNome] = useState("");
 
-  // Adiciona um novo agrupador
-  const addAggregator = () => {
-    const id = newTitle.trim().toLowerCase().replace(/\s+/g, "_");
-    if (!newTitle || aggregators[id]) return;
-    setAggregators({
-      ...aggregators,
-      [id]: { id, title: newTitle.trim(), accountIds: [] },
-    });
-    setNewTitle("");
+  const lista = Object.values(aggregators)
+    .filter(a => a.id !== "unassigned")
+    .sort((a,b) => String(a.title).localeCompare(String(b.title)));
+
+  const handleCreate = async () => {
+    const nome = novoNome.trim();
+    if (!nome) return;
+    await db.createAgrupador(nome);   // <-- grava no banco!
+    setNovoNome("");
+    onChanged?.();                    // recarrega do DB
   };
 
-  // Atualiza título de um agrupador
-  const renameAggregator = (id) => {
-    const title = prompt("Novo nome para o agrupador:", aggregators[id].title);
-    if (!title) return;
-    setAggregators({
-      ...aggregators,
-      [id]: { ...aggregators[id], title },
-    });
+  const handleRename = async () => {
+    if (!renomearId) return;
+    const nome = renomearNome.trim();
+    if (!nome) return;
+    await db.renameAgrupador(Number(renomearId), nome); // <-- grava no banco!
+    setRenomearId("");
+    setRenomearNome("");
+    onChanged?.();                                   // recarrega do DB
   };
 
-  // Remove um agrupador (joga contas no 'unassigned')
-  const deleteAggregator = (id) => {
-    if (!window.confirm("Deletar agrupador e devolver contas ao não agrupadas?"))
-      return;
-    const { [id]: removed, ...rest } = aggregators;
-    const unassigned = {
-      ...rest.unassigned,
-      accountIds: [...rest.unassigned.accountIds, ...removed.accountIds],
-    };
-    setAggregators({ ...rest, unassigned });
-  };
+  // (Opcional) só se quiser expor delete no app
+  // const handleDelete = async (id) => {
+  //   if (!confirm("Excluir este agrupador definitivamente?")) return;
+  //   await db.deleteAgrupador(Number(id));
+  //   onChanged?.();
+  // };
 
   return (
-    <div className="mb-4 border rounded p-2">
-      <h2 className="font-semibold mb-2">Configurações de Agrupadores</h2>
-      <div className="flex space-x-2 mb-2">
+    <div>
+      <h2>Configurações de Agrupadores</h2>
+
+      <div style={{ marginBottom: 12 }}>
         <input
-          type="text"
           placeholder="Novo agrupador"
-          value={newTitle}
-          onChange={(e) => setNewTitle(e.target.value)}
-          className="border p-1 flex-1"
+          value={novoNome}
+          onChange={(e) => setNovoNome(e.target.value)}
         />
-        <button onClick={addAggregator} className="p-1 bg-blue-600 text-white rounded">
-          Adicionar
-        </button>
+        <button onClick={handleCreate}>Adicionar</button>
       </div>
-      <ul>
-        {Object.values(aggregators)
-          .filter((a) => a.id !== "unassigned")
-          .map((agg) => (
-            <li key={agg.id} className="flex items-center justify-between mb-1">
-              <span>{agg.title}</span>
-              <div className="space-x-1">
-                <button onClick={() => renameAggregator(agg.id)} className="text-sm">
-                  Renomear
-                </button>
-                <button onClick={() => deleteAggregator(agg.id)} className="text-sm text-red-600">
-                  Deletar
-                </button>
-              </div>
-            </li>
+
+      <div style={{ marginBottom: 12 }}>
+        <select
+          value={renomearId}
+          onChange={(e) => {
+            const id = e.target.value;
+            setRenomearId(id);
+            const atual = lista.find(x => String(x.id) === String(id));
+            setRenomearNome(atual?.title ?? "");
+          }}
+        >
+          <option value="">— escolher para renomear —</option>
+          {lista.map(a => (
+            <option key={a.id} value={a.id}>{a.title}</option>
           ))}
+        </select>
+        <input
+          placeholder="Novo nome"
+          value={renomearNome}
+          onChange={(e) => setRenomearNome(e.target.value)}
+        />
+        <button onClick={handleRename} disabled={!renomearId}>Renomear</button>
+      </div>
+
+      <ul style={{ marginTop: 8 }}>
+        {lista.map(a => (
+          <li key={a.id}>
+            {a.title} {a.accountIds?.length ? `(${a.accountIds.length} contas)` : "(vazio)"}
+            {/* <button onClick={() => handleDelete(a.id)}>Excluir</button> */}
+          </li>
+        ))}
       </ul>
     </div>
-);
+  );
 }
