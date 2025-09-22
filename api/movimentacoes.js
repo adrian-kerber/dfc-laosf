@@ -1,13 +1,15 @@
-// GET /api/movimentacoes?mes=..&ano=..
-// POST /api/movimentacoes  { movimentacoes, mes, ano }
-import { sql } from '../_db';
+import { neon } from '@neondatabase/serverless';
+export const config = { runtime: 'edge' };
 
-export default async function handler(req, res) {
+const sql = neon(process.env.DATABASE_URL);
+
+export default async function handler(req) {
   try {
+    const url = new URL(req.url);
+
     if (req.method === 'GET') {
-      const { searchParams } = new URL(req.url, 'http://x');
-      const mes = toInt(searchParams.get('mes'));
-      const ano = toInt(searchParams.get('ano'));
+      const mes = url.searchParams.get('mes');
+      const ano = url.searchParams.get('ano');
 
       let rows;
       if (mes && ano) {
@@ -31,31 +33,33 @@ export default async function handler(req, res) {
           JOIN contas c ON m.idconta = c.idconta
           ORDER BY c.idconta, m.ano, m.mes`;
       }
-      return res.status(200).json(rows ?? []);
+      return Response.json(rows ?? [], { status: 200 });
     }
 
     if (req.method === 'POST') {
-      const { movimentacoes, mes, ano } = await parse(req);
+      const body = await req.json();
+      const mes = Number(body.mes);
+      const ano = Number(body.ano);
+      const movs = Array.isArray(body.movimentacoes) ? body.movimentacoes : [];
 
       await sql`DELETE FROM movimentacoes WHERE mes = ${mes} AND ano = ${ano}`;
 
-      for (const mov of movimentacoes) {
+      for (const mov of movs) {
         await sql`
           INSERT INTO movimentacoes
           (idconta, mes, ano, debito, credito, idcentrocusto, centrocusto_nome, centrocusto_codigo)
           VALUES (${mov.idconta}, ${mes}, ${ano},
                   ${mov.debito || 0}, ${mov.credito || 0},
-                  ${mov.idcentrocusto ?? null}, ${mov.centroCustoNome ?? null}, ${mov.centroCustoCodigo ?? null});`;
+                  ${mov.idcentrocusto ?? null}, ${mov.centroCustoNome ?? null}, ${mov.centroCustoCodigo ?? null})
+        `;
       }
-      return res.status(200).json({ ok: true });
+
+      return Response.json({ ok: true, inserted: movs.length }, { status: 200 });
     }
 
-    res.status(405).end();
+    return new Response('Method Not Allowed', { status: 405 });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: e.message });
+    return Response.json({ error: e.message }, { status: 500 });
   }
 }
-
-function toInt(x){ const n = Number(x); return Number.isFinite(n) ? n : null; }
-async function parse(req) { const chunks=[]; for await (const c of req) chunks.push(c); return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}'); }
