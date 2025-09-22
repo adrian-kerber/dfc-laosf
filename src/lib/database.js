@@ -23,21 +23,21 @@ export const db = {
   // =========================
   // MOVIMENTAÇÕES
   // =========================
-  async getMovimentacoes(mes = null, ano = null, idcentrocusto = null) {
-    const qs = new URLSearchParams();
-    if (mes) qs.set("mes", mes);
-    if (ano) qs.set("ano", ano);
-    if (idcentrocusto) qs.set("idcentrocusto", idcentrocusto);
-    return fetch(`/api/movimentacoes?${qs}`).then(j);
-  },
+ async saveMovimentacoes(movimentacoes, mes, ano) {
+  return fetch('/api/movimentacoes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ movimentacoes, mes, ano })
+  }).then(j);
+},
 
-  async saveMovimentacoes(movimentacoes, mes, ano) {
-    return fetch("/api/movimentacoes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ movimentacoes, mes, ano }),
-    }).then(j);
-  },
+async getMovimentacoes(mes, ano) {
+  const qs = new URLSearchParams();
+  if (mes) qs.set('mes', mes);
+  if (ano) qs.set('ano', ano);
+  return fetch(`/api/movimentacoes?${qs}`).then(j);
+},
+
 
   // =========================
   // AGRUPADORES

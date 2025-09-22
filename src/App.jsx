@@ -395,37 +395,30 @@ const handleClearAll = async () => {
 };
 
 
-  const handleSaveGroups = async () => {
-    try {
-      const associations = [];
-      Object.values(aggregators).forEach((agg) => {
-        if (agg.id === "unassigned") return;
-        const gid = Number(agg.id);
-        if (!Number.isInteger(gid)) return;
-        (agg.accountIds || []).forEach((accountId) => {
-          associations.push({ idagrupador: gid, idconta: accountId });
+const handleSaveGroups = async () => {
+  try {
+    const associations = [];
+    Object.values(aggregators).forEach(agg => {
+      if (agg.id !== "unassigned") {
+        (agg.accountIds || []).forEach(accountId => {
+          associations.push({
+            idagrupador: Number(agg.id),   // precisa ser número
+            idconta: accountId,
+            mes: selectedMonth,
+            ano: selectedYear
+          });
         });
-      });
-
-      if (reportFilters.month === ALL) {
-        // aplica para o ano inteiro
-        for (let m = 1; m <= 12; m++) {
-          await db.saveAgrupadorContas(associations, m, currentYear);
-        }
-        alert(`Agrupadores salvos para todos os meses de ${currentYear}.`);
-      } else {
-        await db.saveAgrupadorContas(associations, currentMonth, currentYear);
-        alert("Agrupadores salvos!");
       }
+    });
 
-      loadMonthData();
-    } catch (error) {
-      console.error("Erro ao salvar no banco:", error);
-      const aggKey = `dfc-laosf:${company}:aggregators`;
-      localStorage.setItem(aggKey, JSON.stringify(aggregators));
-      alert("Agrupadores salvos localmente (fallback).");
-    }
-  };
+    await db.saveAgrupadorContas(associations, selectedMonth, selectedYear);
+    alert("Agrupadores salvos no banco de dados!");
+  } catch (error) {
+    console.error("Erro ao salvar no banco:", error);
+    alert("Falha ao salvar agrupadores!");
+  }
+};
+
 
   // ---------- format ----------
   const formatValue = (value) => {
