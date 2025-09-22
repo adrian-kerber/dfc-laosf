@@ -205,108 +205,140 @@ export default function App() {
   };
 
   // importar planilha
-  const handleFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!selectedMonth || !selectedYear) {
-      alert("Selecione mês e ano antes de importar.");
-      return;
+  // ---------- IMPORTAÇÃO DO EXCEL ----------
+const handleFile = async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  if (!selectedMonth || !selectedYear) {
+    alert("Selecione o mês e ano antes de importar o arquivo.");
+    return;
+  }
+  setLoading(true);
+
+  try {
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, { type: "array" });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+    if (!rows.length) return alert("Planilha vazia.");
+
+    // Centro de custo
+    const centro = extractCostCenter(rows);
+    let idCC = null;
+    if (centro) {
+      try {
+        const saved = await db.upsertCentroCusto?.({ codigo: centro.id, nome: centro.nome });
+        idCC = saved?.idcentrocusto ?? null;
+      } catch (e) {
+        console.warn("upsertCentroCusto falhou:", e?.message || e);
+      }
     }
-    setLoading(true);
-    try {
-      const data = await file.arrayBuffer();
-      const wb = XLSX.read(data, { type: "array" });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
-      if (!rows.length) return alert("Planilha vazia.");
 
-      const centro = extractCostCenter(rows);
-      let idCC = null;
-      if (centro) {
-        try {
-          const saved = await db.upsertCentroCusto?.({ codigo: centro.id, nome: centro.nome });
-          idCC = saved?.idcentrocusto ?? null;
-        } catch {}
+    // localizar cabeçalho
+    let headerIdx = -1;
+    for (let i = 0; i < Math.min(rows.length, 60); i++) {
+      const r = rows[i].map(norm);
+      const hasDeb = r.some((c) => c.includes("débito") || c.includes("debito"));
+      const hasCred = r.some((c) => c.includes("crédito") || c.includes("credito"));
+      const hasConta = r.some((c) => c.includes("conta"));
+      const hasCodigo = r.some((c) => c.includes("código") || c.includes("codigo"));
+      const hasDesc = r.some((c) => c.includes("descrição") || c.includes("descricao"));
+      if (hasDeb && hasCred && (hasConta || hasCodigo) && hasDesc) {
+        headerIdx = i;
+        break;
+      }
+    }
+    if (headerIdx === -1) {
+      return alert("Não encontrei cabeçalhos (Conta/Código/Descrição/Débito/Crédito).");
+    }
+
+    const header = rows[headerIdx];
+    const colCodigo = findCol(header, ["código", "codigo"]);
+    const colDescricao = findCol(header, ["descrição", "descricao"]);
+    const colDeb = findCol(header, ["débito", "debito"]);
+    const colCred = findCol(header, ["crédito", "credito"]);
+
+    if (colDeb === -1 || colCred === -1) {
+      return alert("Colunas de Débito/Crédito não encontradas.");
+    }
+
+    // processar linhas
+    const newAccounts = {};
+    const movimentacoes = [];
+
+    for (let r = headerIdx + 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row || row.length === 0) continue;
+
+      const codigoRaw = colCodigo !== -1 ? String(row[colCodigo] || "").trim() : "";
+      if (!codigoRaw || !/^\d+$/.test(codigoRaw)) continue;
+
+      const id = codigoRaw;
+      const descricao = colDescricao !== -1 ? String(row[colDescricao] || "").trim() : "Sem descrição";
+      const deb = parseBRNumber(row[colDeb]);
+      const cred = parseBRNumber(row[colCred]);
+      if (deb === 0 && cred === 0) continue;
+
+      let idconta = id;
+      try {
+        const conta = await db.upsertConta({ id, name: descricao });
+        idconta = conta?.idconta ?? id;
+      } catch (e) {
+        console.warn("upsertConta falhou:", e?.message || e);
       }
 
-      let headerIdx = -1;
-      for (let i = 0; i < Math.min(rows.length, 60); i++) {
-        const r = rows[i].map(norm);
-        if (r.some((c) => c.includes("debito")) && r.some((c) => c.includes("credito"))) {
-          headerIdx = i;
-          break;
-        }
-      }
-      if (headerIdx === -1) return alert("Cabeçalhos não encontrados.");
-      const header = rows[headerIdx];
-      const colCodigo = findCol(header, ["código", "codigo"]);
-      const colDescricao = findCol(header, ["descrição", "descricao"]);
-      const colDeb = findCol(header, ["débito", "debito"]);
-      const colCred = findCol(header, ["crédito", "credito"]);
-
-      const newAccounts = {};
-      const movimentacoes = [];
-
-      for (let r = headerIdx + 1; r < rows.length; r++) {
-        const row = rows[r];
-        const codigoRaw = colCodigo !== -1 ? String(row[colCodigo] || "").trim() : "";
-        if (!codigoRaw || !/^\d+$/.test(codigoRaw)) continue;
-        const id = codigoRaw;
-        const descricao = colDescricao !== -1 ? String(row[colDescricao] || "").trim() : "Sem descrição";
-        const deb = parseBRNumber(row[colDeb]);
-        const cred = parseBRNumber(row[colCred]);
-        if (deb === 0 && cred === 0) continue;
-
-        let idconta = id;
-        try {
-          const conta = await db.upsertConta({ id, name: descricao });
-          idconta = conta?.idconta ?? id;
-        } catch {}
-
-        movimentacoes.push({
-          idconta,
-          mes: selectedMonth,
-          ano: selectedYear,
-          debito: deb,
-          credito: cred,
-          idcentrocusto: idCC,
-          centrocusto_nome: centro?.nome ?? null,
-          centrocusto_codigo: centro?.id ?? null,
-        });
-
-        const val = cred - deb;
-        newAccounts[idconta] = {
-          id: idconta,
-          name: descricao,
-          valor: Math.abs(val),
-          sign: val >= 0 ? "+" : "-",
-        };
-      }
-
-      await db.saveMovimentacoes(movimentacoes, selectedMonth, selectedYear);
-      setAccounts(newAccounts);
-      setAggregators({
-        unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: Object.keys(newAccounts) },
+      movimentacoes.push({
+        idconta,
+        mes: selectedMonth,
+        ano: selectedYear,
+        debito: deb,
+        credito: cred,
+        idcentrocusto: idCC,
+        centrocusto_nome: centro?.nome ?? null,
+        centrocusto_codigo: centro?.id ?? null,
       });
 
-      setCurrentMonth(selectedMonth);
-      setCurrentYear(selectedYear);
-      setReportFilters((p) => ({ ...p, month: selectedMonth, year: selectedYear }));
-      if (idCC) {
-        setCurrentCostCenter(String(idCC));
-        setReportFilters((p) => ({ ...p, costCenter: String(idCC) }));
-      }
-
-      alert(`Importadas ${Object.keys(newAccounts).length} contas para ${selectedMonth}/${selectedYear}.`);
-      setActiveView("reports");
-    } catch (err) {
-      console.error("Erro ao importar:", err);
-      alert("Erro ao importar: " + err.message);
-    } finally {
-      setLoading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      const val = cred - deb;
+      newAccounts[idconta] = {
+        id: idconta,
+        name: descricao,
+        valor: Math.abs(val),
+        sign: val >= 0 ? "+" : "-",
+      };
     }
-  };
+
+    // salvar no banco
+    await db.saveMovimentacoes(movimentacoes, selectedMonth, selectedYear);
+
+    // atualizar estado local
+    setAccounts(newAccounts);
+    setAggregators({
+      unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: Object.keys(newAccounts) },
+    });
+
+    setCurrentMonth(selectedMonth);
+    setCurrentYear(selectedYear);
+    setReportFilters((p) => ({ ...p, month: selectedMonth, year: selectedYear }));
+    if (idCC) {
+      setCurrentCostCenter(String(idCC));
+      setReportFilters((p) => ({ ...p, costCenter: String(idCC) }));
+    }
+
+    alert(
+      `Importadas ${Object.keys(newAccounts).length} contas para ${selectedMonth}/${selectedYear}${
+        centro ? ` (CC: ${centro.id ? centro.id + " - " : ""}${centro.nome})` : ""
+      }.`
+    );
+    setActiveView("reports");
+  } catch (err) {
+    console.error("Erro ao importar:", err);
+    alert("Erro ao importar dados: " + err.message);
+  } finally {
+    setLoading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+};
+
 
   const formatValue = (value) => `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
 
