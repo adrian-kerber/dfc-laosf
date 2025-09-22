@@ -5,7 +5,7 @@ import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import AggregatorConfig from "./components/AggregatorConfig";
 import MonthYearSelector from "./components/MonthYearSelector";
 import DataManager from "./components/DataManager";
-import ReportFilters from "./components/ReportFilters";
+// import ReportFilters from "./components/ReportFilters"; // (removido - filtros inline)
 import PriceManager from "./components/PriceManager";
 import { db } from "./lib/database";
 import "./App.css";
@@ -31,6 +31,11 @@ const TABS = [
 const ALL = "all";
 const LS_COMPANY = "dfc-laosf:company";
 const LS_FILTERS = "dfc-laosf:filters";
+
+const MONTHS_PT = [
+  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
+];
 
 // ---------------- helpers de persistência ----------------
 const readSavedFilters = () => {
@@ -515,35 +520,68 @@ export default function App() {
 
         {activeView === "reports" && (
           <>
-            <ReportFilters
-              onFilterChange={(f) => {
-                setReportFilters(f);
-                if (f.viewMode === "specific") {
-                  setCurrentYear(f.year);
-                  setCurrentMonth(f.month);
-                }
-                if (f.costCenter !== undefined) setCurrentCostCenter(f.costCenter);
+            <h2>Filtros do Relatório</h2>
+
+            {/* Mês */}
+            <label className="label">Mês</label>
+            <select
+              value={String(reportFilters.month)}
+              onChange={(e) => {
+                const v = e.target.value === "all" ? ALL : Number(e.target.value);
+                setReportFilters((p) => ({ ...p, month: v }));
+                if (v !== ALL) setCurrentMonth(v);
               }}
-              selectedMonth={reportFilters.month}
-              selectedYear={reportFilters.year}
-              onMonthChange={(m) => {
-                setReportFilters((p) => ({ ...p, month: m }));
-                setCurrentMonth(m);
-              }}
-              onYearChange={(y) => {
+            >
+              <option value="all">Todos os meses</option>
+              {MONTHS_PT.map((m, i) => (
+                <option key={i + 1} value={i + 1}>
+                  {m}
+                </option>
+              ))}
+            </select>
+
+            {/* Ano */}
+            <label className="label" style={{ marginTop: 8 }}>
+              Ano
+            </label>
+            <select
+              value={reportFilters.year}
+              onChange={(e) => {
+                const y = Number(e.target.value);
                 setReportFilters((p) => ({ ...p, year: y }));
                 setCurrentYear(y);
               }}
-              costCenters={[{ idcentrocusto: ALL, nome: "Todos os Centros" }, ...costCenters]}
-              selectedCostCenter={reportFilters.costCenter}
-              onCostCenterChange={(cc) => {
+            >
+              {Array.from({ length: 10 }, (_, k) => new Date().getFullYear() - 5 + k).map(
+                (y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                )
+              )}
+            </select>
+
+            {/* Centro de Custo */}
+            <label className="label" style={{ marginTop: 8 }}>
+              Centro de Custo
+            </label>
+            <select
+              value={String(reportFilters.costCenter)}
+              onChange={(e) => {
+                const cc = e.target.value === "all" ? ALL : e.target.value;
                 setReportFilters((p) => ({ ...p, costCenter: cc }));
                 setCurrentCostCenter(cc);
               }}
-              enableAllMonths
-            />
+            >
+              <option value="all">Todos os Centros</option>
+              {costCenters.map((cc) => (
+                <option key={cc.idcentrocusto} value={cc.idcentrocusto}>
+                  {cc.codigo ? `${cc.codigo} - ` : ""}{cc.nome}
+                </option>
+              ))}
+            </select>
 
-            <h2>Unidade de Medida</h2>
+            <h2 style={{ marginTop: 12 }}>Unidade de Medida</h2>
             <select value={unit} onChange={(e) => setUnit(e.target.value)}>
               <option value="reais">Reais (R$)</option>
               <option value="soja">Sacas de Soja</option>
