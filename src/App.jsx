@@ -379,6 +379,22 @@ export default function App() {
     }));
   };
 
+// dentro do App.jsx
+const handleClearAll = async () => {
+  if (!window.confirm("Tem certeza que deseja limpar todos os dados?")) return;
+  try {
+    await db.clearAllData();
+    alert("Todos os dados foram removidos do banco!");
+    setAggregators({ unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: [] } });
+    setAccounts({});
+    setExpanded({});
+  } catch (error) {
+    console.error("Erro ao limpar banco:", error);
+    alert("Erro ao limpar dados: " + error.message);
+  }
+};
+
+
   const handleSaveGroups = async () => {
     try {
       const associations = [];
@@ -477,9 +493,10 @@ export default function App() {
             </div>
 
             <DataManager onDataChange={loadMonthData} />
-            <button onClick={clearAllData} className="btn-clear">
-              Limpar tudo
-            </button>
+            <button onClick={handleClearAll} className="btn-clear">
+  Limpar tudo
+</button>
+
           </>
         )}
 
