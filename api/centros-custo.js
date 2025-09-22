@@ -1,4 +1,3 @@
-// /pages/api/centros-custo.js
 import { neon } from "@neondatabase/serverless";
 export const config = { runtime: "edge" };
 
@@ -7,7 +6,7 @@ const sql = neon(process.env.DATABASE_URL);
 export default async function handler(req) {
   try {
     if (req.method === "GET") {
-      // lista todos os centros de custo
+      // Lista todos os centros de custo
       const rows = await sql`SELECT * FROM centros_custo ORDER BY nome`;
       return Response.json(rows ?? [], { status: 200 });
     }
@@ -27,7 +26,6 @@ export default async function handler(req) {
         ON CONFLICT (codigo) DO UPDATE SET nome = ${nome}
         RETURNING *
       `;
-
       return Response.json(rows?.[0] ?? null, { status: 200 });
     }
 

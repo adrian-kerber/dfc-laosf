@@ -95,10 +95,9 @@ export const db = {
   // =========================
   // ADMIN / LIMPEZA
   // =========================
-  async clearAllData() {
-    // aqui seria bom criar rota /api/admin/clear
-    throw new Error("Implement admin clear route server-side");
-  },
+ async clearAllData() {
+  return fetch('/api/admin/clear', { method: 'POST' }).then(j);
+},
 
   async getAvailablePeriods() {
     // idem — rota /api/periods
