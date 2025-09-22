@@ -1,3 +1,4 @@
+// App.jsx
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
@@ -8,6 +9,12 @@ import ReportFilters from "./components/ReportFilters";
 import PriceManager from "./components/PriceManager";
 import { db } from "./lib/database";
 import "./App.css";
+
+/**
+ * IMPORTANTE:
+ * - Agrupadores e mapeamentos (conta -> agrupador) são GLOBAIS.
+ * - Movimentações são por período, mas sem upsert/sem delete: cada import INSERE.
+ */
 
 const COMPANIES = [
   { id: "1", name: "LUIZ ANTONIO ORTOLLAN SALLES" },
@@ -20,46 +27,50 @@ const TABS = [
   { id: "import", label: "Importar" },
 ];
 
+// Valor sentinela para filtros
 const ALL = "all";
 
 export default function App() {
-  // empresa
+  // ------------------ Empresa & Abas ------------------
   const [company, setCompany] = useState(
     () => localStorage.getItem("dfc-laosf:company") || COMPANIES[0].id
   );
   const [activeView, setActiveView] = useState("reports");
 
-  // períodos
+  // ------------------ Períodos ------------------
+  // Período do upload (UI da importação)
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+
+  // Período visível no relatório
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth() + 1);
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
 
-  // centro de custo
-  const [costCenters, setCostCenters] = useState([]);
+  // ------------------ Centro de Custo ------------------
+  const [costCenters, setCostCenters] = useState([]); // [{idcentrocusto, codigo, nome}]
   const [currentCostCenter, setCurrentCostCenter] = useState(ALL);
 
-  // dados
+  // ------------------ Dados em memória ------------------
   const [aggregators, setAggregators] = useState({
     unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: [] },
   });
-  const [accounts, setAccounts] = useState({});
+  const [accounts, setAccounts] = useState({}); // { [idconta]: {id, name, valor, sign} }
   const [loading, setLoading] = useState(false);
 
-  // ui
+  // ------------------ UI Aux ------------------
   const [expanded, setExpanded] = useState({});
   const [unit, setUnit] = useState("reais");
   const [currentPrices, setCurrentPrices] = useState({});
   const [reportFilters, setReportFilters] = useState({
     viewMode: "specific",
-    month: currentMonth,
+    month: currentMonth,         // pode virar "all"
     year: currentYear,
-    costCenter: currentCostCenter,
+    costCenter: currentCostCenter // "all" ou id
   });
 
   const fileInputRef = useRef(null);
 
-  // helpers
+  // ------------------ Helpers ------------------
   const parseBRNumber = (val) => {
     if (val == null) return 0;
     if (typeof val === "number" && Number.isFinite(val)) return val;
@@ -68,14 +79,20 @@ export default function App() {
     const n = parseFloat(s.replace(/\s+/g, "").replace(/\./g, "").replace(/,/g, "."));
     return Number.isFinite(n) ? n : 0;
   };
+
   const norm = (x) => String(x || "").toLowerCase().replace(/\s+/g, " ").trim();
+
   const findCol = (headerRow, candidates) => {
     const H = headerRow.map(norm);
     for (let i = 0; i < H.length; i++) {
-      if (candidates.some((c) => H[i].includes(c))) return i;
+      const cell = H[i];
+      if (!cell) continue;
+      if (candidates.some((c) => cell.includes(c))) return i;
     }
     return -1;
   };
+
+  // Tenta achar o "Centro de Custo" em linhas superiores do arquivo
   const extractCostCenter = (rows) => {
     const MAX = Math.min(rows.length, 30);
     for (let i = 0; i < MAX; i++) {
@@ -92,10 +109,7 @@ export default function App() {
           if (!raw) return null;
           let id = null, nome = raw;
           const m = raw.match(/^(\d+)\s*[-–—:]?\s*(.+)$/);
-          if (m) {
-            id = m[1].trim();
-            nome = m[2].trim();
-          }
+          if (m) { id = m[1].trim(); nome = m[2].trim(); }
           return { id: id || null, nome };
         }
       }
@@ -103,33 +117,32 @@ export default function App() {
     return null;
   };
 
-  // carregar dados
+  // ------------------ Carregar dados (Relatório) ------------------
   const loadMonthData = useCallback(async () => {
     try {
       setLoading(true);
 
-      // centros de custo
+      // 1) Centros de custo (catálogo para filtro)
       try {
         const ccs = await db.getCentrosCusto?.();
         if (Array.isArray(ccs)) setCostCenters(ccs);
-      } catch {}
+      } catch (e) {
+        console.warn("getCentrosCusto indisponível:", e?.message || e);
+      }
 
-      // contas
+      // 2) Contas (catálogo)
       const contas = await db.getContas();
       const contasMap = {};
       contas.forEach((c) => {
         contasMap[c.idconta] = { id: c.idconta, name: c.nome, valor: 0, sign: "+" };
       });
 
-      // movimentações
+      // 3) Movimentações do período (mês opcional) + filtro de CC no client (ou na API, se você já implementou)
       const monthParam = reportFilters.month === ALL ? null : currentMonth;
-      const movs = await db.getMovimentacoes(monthParam, currentYear);
-      const movsFiltered =
-        currentCostCenter === ALL
-          ? movs
-          : movs.filter((m) => String(m.idcentrocusto) === String(currentCostCenter));
+      const movs = await db.getMovimentacoes(monthParam, currentYear, currentCostCenter === ALL ? null : currentCostCenter);
 
-      movsFiltered.forEach((m) => {
+      // 4) Agregar valores por conta (soma tudo que bate com os filtros)
+      movs.forEach((m) => {
         if (!contasMap[m.idconta]) return;
         const v = (m.credito || 0) - (m.debito || 0);
         const prev = contasMap[m.idconta].valor * (contasMap[m.idconta].sign === "+" ? 1 : -1);
@@ -138,7 +151,7 @@ export default function App() {
         contasMap[m.idconta].sign = novo >= 0 ? "+" : "-";
       });
 
-      // agrupadores
+      // 5) Agrupadores (globais)
       const grupos = await db.getAgrupadores();
       const gruposMap = {
         unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: [] },
@@ -151,21 +164,22 @@ export default function App() {
         };
       });
 
-      // ligações
-      const liga = await db.getAgrupadorContas(
-        reportFilters.month === ALL ? null : currentMonth,
-        currentYear
-      );
+      // 6) Ligações globais Conta → Agrupador
+      const liga = await db.getAgrupadorContas(); // sem período!
       liga.forEach((a) => {
         const gid = String(a.idagrupador);
-        if (gruposMap[gid] && contasMap[a.idconta]) gruposMap[gid].accountIds.push(a.idconta);
+        if (gruposMap[gid] && contasMap[a.idconta]) {
+          gruposMap[gid].accountIds.push(a.idconta);
+        }
       });
 
-      // não atribuídas
-      const assigned = Object.values(gruposMap)
-        .filter((g) => g.id !== "unassigned")
-        .flatMap((g) => g.accountIds || []);
-      gruposMap.unassigned.accountIds = Object.keys(contasMap).filter((id) => !assigned.includes(id));
+      // 7) "Sem agrupador" = contas do catálogo que não estão mapeadas
+      const assigned = new Set(
+        Object.values(gruposMap)
+          .filter((g) => g.id !== "unassigned")
+          .flatMap((g) => g.accountIds || [])
+      );
+      gruposMap.unassigned.accountIds = Object.keys(contasMap).filter((id) => !assigned.has(id));
 
       setAccounts(contasMap);
       setAggregators(gruposMap);
@@ -180,168 +194,201 @@ export default function App() {
     loadMonthData();
   }, [loadMonthData]);
 
-  // salvar agrupadores
+  useEffect(() => {
+    localStorage.setItem("dfc-laosf:company", company);
+  }, [company]);
+
+  // ------------------ Salvar MAPEAMENTO (global) ------------------
   const handleSaveGroups = async () => {
     try {
+      // Monta "set": todas as contas mapeadas + todas as não-mapeadas (idagrupador=null)
       const associations = [];
       Object.values(aggregators).forEach((agg) => {
-        if (agg.id !== "unassigned") {
-          (agg.accountIds || []).forEach((accountId) => {
-            associations.push({
-              idagrupador: Number(agg.id),
-              idconta: accountId,
-              mes: selectedMonth,
-              ano: selectedYear,
-            });
+        if (agg.id === "unassigned") return;
+        (agg.accountIds || []).forEach((accountId) => {
+          associations.push({
+            idconta: String(accountId),
+            idagrupador: Number(agg.id),
           });
-        }
+        });
       });
-      await db.saveAgrupadorContas(associations, selectedMonth, selectedYear);
-      alert("Agrupadores salvos!");
-    } catch (error) {
-      console.error("Erro ao salvar agrupadores:", error);
-      alert("Falha ao salvar agrupadores!");
+
+      // Contas sem agrupador => remove vínculo
+      const mapped = new Set(associations.map((a) => a.idconta));
+      const unassignedItems = Object.keys(accounts)
+        .filter((id) => !mapped.has(id))
+        .map((id) => ({ idconta: String(id), idagrupador: null }));
+
+      await db.saveAgrupadorContas([...associations, ...unassignedItems]);
+      alert("Mapeamento de contas salvo (global).");
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao salvar agrupadores: " + e.message);
     }
   };
 
-  // importar planilha
-  // ---------- IMPORTAÇÃO DO EXCEL ----------
-const handleFile = async (e) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  if (!selectedMonth || !selectedYear) {
-    alert("Selecione o mês e ano antes de importar o arquivo.");
-    return;
-  }
-  setLoading(true);
+  // ------------------ DnD (apenas atualiza estado local) ------------------
+  const onDragEnd = ({ source, destination, draggableId }) => {
+    if (!destination) return;
+    if (source.droppableId === destination.droppableId && source.index === destination.index) return;
 
-  try {
-    const data = await file.arrayBuffer();
-    const wb = XLSX.read(data, { type: "array" });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
-    if (!rows.length) return alert("Planilha vazia.");
+    const start = aggregators[source.droppableId];
+    const finish = aggregators[destination.droppableId];
+    const newStart = Array.from(start.accountIds || []);
+    newStart.splice(source.index, 1);
+    const newFinish = Array.from(finish.accountIds || []);
+    newFinish.splice(destination.index, 0, draggableId);
 
-    // Centro de custo
-    const centro = extractCostCenter(rows);
-    let idCC = null;
-    if (centro) {
-      try {
-        const saved = await db.upsertCentroCusto?.({ codigo: centro.id, nome: centro.nome });
-        idCC = saved?.idcentrocusto ?? null;
-      } catch (e) {
-        console.warn("upsertCentroCusto falhou:", e?.message || e);
-      }
+    setAggregators((prev) => ({
+      ...prev,
+      [start.id]: { ...start, accountIds: newStart },
+      [finish.id]: { ...finish, accountIds: newFinish },
+    }));
+  };
+
+  // ------------------ Importação do Excel (INSERE movimentações; não apaga) ------------------
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!selectedMonth || !selectedYear) {
+      alert("Selecione o mês e ano antes de importar o arquivo.");
+      return;
     }
+    setLoading(true);
 
-    // localizar cabeçalho
-    let headerIdx = -1;
-    for (let i = 0; i < Math.min(rows.length, 60); i++) {
-      const r = rows[i].map(norm);
-      const hasDeb = r.some((c) => c.includes("débito") || c.includes("debito"));
-      const hasCred = r.some((c) => c.includes("crédito") || c.includes("credito"));
-      const hasConta = r.some((c) => c.includes("conta"));
-      const hasCodigo = r.some((c) => c.includes("código") || c.includes("codigo"));
-      const hasDesc = r.some((c) => c.includes("descrição") || c.includes("descricao"));
-      if (hasDeb && hasCred && (hasConta || hasCodigo) && hasDesc) {
-        headerIdx = i;
-        break;
-      }
-    }
-    if (headerIdx === -1) {
-      return alert("Não encontrei cabeçalhos (Conta/Código/Descrição/Débito/Crédito).");
-    }
+    try {
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data, { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+      if (!rows.length) return alert("Planilha vazia.");
 
-    const header = rows[headerIdx];
-    const colCodigo = findCol(header, ["código", "codigo"]);
-    const colDescricao = findCol(header, ["descrição", "descricao"]);
-    const colDeb = findCol(header, ["débito", "debito"]);
-    const colCred = findCol(header, ["crédito", "credito"]);
-
-    if (colDeb === -1 || colCred === -1) {
-      return alert("Colunas de Débito/Crédito não encontradas.");
-    }
-
-    // processar linhas
-    const newAccounts = {};
-    const movimentacoes = [];
-
-    for (let r = headerIdx + 1; r < rows.length; r++) {
-      const row = rows[r];
-      if (!row || row.length === 0) continue;
-
-      const codigoRaw = colCodigo !== -1 ? String(row[colCodigo] || "").trim() : "";
-      if (!codigoRaw || !/^\d+$/.test(codigoRaw)) continue;
-
-      const id = codigoRaw;
-      const descricao = colDescricao !== -1 ? String(row[colDescricao] || "").trim() : "Sem descrição";
-      const deb = parseBRNumber(row[colDeb]);
-      const cred = parseBRNumber(row[colCred]);
-      if (deb === 0 && cred === 0) continue;
-
-      let idconta = id;
-      try {
-        const conta = await db.upsertConta({ id, name: descricao });
-        idconta = conta?.idconta ?? id;
-      } catch (e) {
-        console.warn("upsertConta falhou:", e?.message || e);
+      // 1) Centro de Custo
+      const centro = extractCostCenter(rows);
+      let idCC = null;
+      if (centro) {
+        try {
+          const saved = await db.upsertCentroCusto?.({ codigo: centro.id, nome: centro.nome });
+          idCC = saved?.idcentrocusto ?? null;
+        } catch (e) {
+          console.warn("upsertCentroCusto falhou:", e?.message || e);
+        }
       }
 
-      movimentacoes.push({
-        idconta,
-        mes: selectedMonth,
-        ano: selectedYear,
-        debito: deb,
-        credito: cred,
-        idcentrocusto: idCC,
-        centrocusto_nome: centro?.nome ?? null,
-        centrocusto_codigo: centro?.id ?? null,
+      // 2) Encontrar cabeçalho
+      let headerIdx = -1;
+      for (let i = 0; i < Math.min(rows.length, 60); i++) {
+        const r = rows[i].map(norm);
+        const hasDeb = r.some((c) => c.includes("débito") || c.includes("debito"));
+        const hasCred = r.some((c) => c.includes("crédito") || c.includes("credito"));
+        const hasConta = r.some((c) => c.includes("conta"));
+        const hasCodigo = r.some((c) => c.includes("código") || c.includes("codigo"));
+        const hasDesc = r.some((c) => c.includes("descrição") || c.includes("descricao"));
+        if (hasDeb && hasCred && (hasConta || hasCodigo) && hasDesc) {
+          headerIdx = i;
+          break;
+        }
+      }
+      if (headerIdx === -1) {
+        return alert("Não encontrei cabeçalhos (Conta/Código/Descrição/Débito/Crédito).");
+      }
+
+      const header = rows[headerIdx];
+      const colCodigo = findCol(header, ["código", "codigo"]);
+      const colDescricao = findCol(header, ["descrição", "descricao"]);
+      const colDeb = findCol(header, ["débito", "debito"]);
+      const colCred = findCol(header, ["crédito", "credito"]);
+      if (colDeb === -1 || colCred === -1) {
+        return alert("Colunas de Débito/Crédito não encontradas.");
+      }
+
+      // 3) Montar lote de movimentações
+      const newAccounts = {};
+      const movimentacoes = [];
+
+      for (let r = headerIdx + 1; r < rows.length; r++) {
+        const row = rows[r];
+        if (!row || row.length === 0) continue;
+
+        const codigoRaw = colCodigo !== -1 ? String(row[colCodigo] || "").trim() : "";
+        if (!codigoRaw || !/^\d+$/.test(codigoRaw)) continue; // idconta precisa ser numérico
+
+        const id = codigoRaw; // idconta = código
+        const descricao = colDescricao !== -1 ? String(row[colDescricao] || "").trim() : "Sem descrição";
+        const deb = parseBRNumber(row[colDeb]);
+        const cred = parseBRNumber(row[colCred]);
+        if (deb === 0 && cred === 0) continue;
+
+        // Garante a conta no catálogo
+        let idconta = id;
+        try {
+          const conta = await db.upsertConta({ id, name: descricao });
+          idconta = conta?.idconta ?? id;
+        } catch (e) {
+          console.warn("upsertConta falhou:", e?.message || e);
+        }
+
+        // Linha de movimentação (INSERE, não apaga/upsert)
+        movimentacoes.push({
+          idconta,
+          mes: selectedMonth,
+          ano: selectedYear,
+          debito: deb,
+          credito: cred,
+          idcentrocusto: idCC,
+          centrocusto_nome: centro?.nome ?? null,
+          centrocusto_codigo: centro?.id ?? null,
+        });
+
+        // Valor momentâneo só pra feedback de tela pós-import
+        const val = cred - deb;
+        newAccounts[idconta] = {
+          id: idconta,
+          name: descricao,
+          valor: Math.abs(val),
+          sign: val >= 0 ? "+" : "-",
+        };
+      }
+
+      // 4) Persistir movimentações (SEM delete/upsert)
+      await db.saveMovimentacoes(movimentacoes, selectedMonth, selectedYear);
+
+      // 5) Atualiza UI (coloca tudo como "sem agrupador" até o load real)
+      setAccounts(newAccounts);
+      setAggregators({
+        unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: Object.keys(newAccounts) },
       });
 
-      const val = cred - deb;
-      newAccounts[idconta] = {
-        id: idconta,
-        name: descricao,
-        valor: Math.abs(val),
-        sign: val >= 0 ? "+" : "-",
-      };
+      // 6) Sincroniza filtros para o período importado e (se tiver) CC
+      setCurrentMonth(selectedMonth);
+      setCurrentYear(selectedYear);
+      setReportFilters((p) => ({ ...p, month: selectedMonth, year: selectedYear }));
+      if (idCC) {
+        setCurrentCostCenter(String(idCC));
+        setReportFilters((p) => ({ ...p, costCenter: String(idCC) }));
+      }
+
+      alert(
+        `Importadas ${Object.keys(newAccounts).length} contas para ${selectedMonth}/${selectedYear}${
+          centro ? ` (CC: ${centro.id ? centro.id + " - " : ""}${centro.nome})` : ""
+        }.`
+      );
+
+      // Volta pra relatórios pra ver o resultado do período
+      setActiveView("reports");
+    } catch (err) {
+      console.error("Erro ao importar:", err);
+      alert("Erro ao importar dados: " + err.message);
+    } finally {
+      setLoading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
+  };
 
-    // salvar no banco
-    await db.saveMovimentacoes(movimentacoes, selectedMonth, selectedYear);
-
-    // atualizar estado local
-    setAccounts(newAccounts);
-    setAggregators({
-      unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: Object.keys(newAccounts) },
-    });
-
-    setCurrentMonth(selectedMonth);
-    setCurrentYear(selectedYear);
-    setReportFilters((p) => ({ ...p, month: selectedMonth, year: selectedYear }));
-    if (idCC) {
-      setCurrentCostCenter(String(idCC));
-      setReportFilters((p) => ({ ...p, costCenter: String(idCC) }));
-    }
-
-    alert(
-      `Importadas ${Object.keys(newAccounts).length} contas para ${selectedMonth}/${selectedYear}${
-        centro ? ` (CC: ${centro.id ? centro.id + " - " : ""}${centro.nome})` : ""
-      }.`
-    );
-    setActiveView("reports");
-  } catch (err) {
-    console.error("Erro ao importar:", err);
-    alert("Erro ao importar dados: " + err.message);
-  } finally {
-    setLoading(false);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  }
-};
-
-
+  // ------------------ Format ------------------
   const formatValue = (value) => `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
 
+  // ------------------ Render ------------------
   return (
     <div className="container">
       <div className="sidebar">
@@ -356,14 +403,20 @@ const handleFile = async (e) => {
           ))}
         </select>
 
+        {/* Abas */}
         <div className="tabs">
           {TABS.map((t) => (
-            <button key={t.id} className={`tab-btn ${activeView === t.id ? "active" : ""}`} onClick={() => setActiveView(t.id)}>
+            <button
+              key={t.id}
+              className={`tab-btn ${activeView === t.id ? "active" : ""}`}
+              onClick={() => setActiveView(t.id)}
+            >
               {t.label}
             </button>
           ))}
         </div>
 
+        {/* Sidebar por aba */}
         {activeView === "import" && (
           <>
             <MonthYearSelector
@@ -385,87 +438,224 @@ const handleFile = async (e) => {
 
         {activeView === "groups" && (
           <>
-            <AggregatorConfig aggregators={aggregators} setAggregators={setAggregators} />
-            <button onClick={handleSaveGroups} className="btn-save">Salvar agrupadores</button>
+            <AggregatorConfig
+              aggregators={aggregators}
+              setAggregators={setAggregators}
+            />
+            <button onClick={handleSaveGroups} className="btn-save">
+              Salvar agrupadores
+            </button>
           </>
         )}
 
         {activeView === "reports" && (
-          <ReportFilters
-            onFilterChange={(f) => {
-              setReportFilters(f);
-              if (f.viewMode === "specific") {
-                setCurrentYear(f.year);
-                setCurrentMonth(f.month);
-              }
-              if (f.costCenter !== undefined) setCurrentCostCenter(f.costCenter);
-            }}
-            selectedMonth={reportFilters.month}
-            selectedYear={reportFilters.year}
-            onMonthChange={(m) => { setReportFilters((p) => ({ ...p, month: m })); setCurrentMonth(m); }}
-            onYearChange={(y) => { setReportFilters((p) => ({ ...p, year: y })); setCurrentYear(y); }}
-            costCenters={[{ idcentrocusto: ALL, nome: "Todos os Centros" }, ...costCenters]}
-            selectedCostCenter={reportFilters.costCenter}
-            onCostCenterChange={(cc) => { setReportFilters((p) => ({ ...p, costCenter: cc })); setCurrentCostCenter(cc); }}
-            enableAllMonths
-          />
+          <>
+            <ReportFilters
+              // Sempre refletir no período visível
+              onFilterChange={(f) => {
+                setReportFilters(f);
+                if (f.viewMode === "specific") {
+                  setCurrentYear(f.year);
+                  setCurrentMonth(f.month);
+                }
+                if (f.costCenter !== undefined) {
+                  setCurrentCostCenter(f.costCenter);
+                }
+              }}
+              selectedMonth={reportFilters.month}
+              selectedYear={reportFilters.year}
+              onMonthChange={(m) => { setReportFilters((p) => ({ ...p, month: m })); setCurrentMonth(m); }}
+              onYearChange={(y) => { setReportFilters((p) => ({ ...p, year: y })); setCurrentYear(y); }}
+              costCenters={[{ idcentrocusto: ALL, nome: "Todos os Centros" }, ...costCenters]}
+              selectedCostCenter={reportFilters.costCenter}
+              onCostCenterChange={(cc) => { setReportFilters((p) => ({ ...p, costCenter: cc })); setCurrentCostCenter(cc); }}
+              enableAllMonths
+            />
+
+            {/* Unidade de medida (mantido) */}
+            <h2>Unidade de Medida</h2>
+            <select value={unit} onChange={(e) => setUnit(e.target.value)}>
+              <option value="reais">Reais (R$)</option>
+              <option value="soja">Sacas de Soja</option>
+              <option value="milho">Sacas de Milho</option>
+              <option value="suino">Kg de Suíno</option>
+            </select>
+            {unit !== "reais" && (
+              <PriceManager
+                selectedMonth={reportFilters.month === ALL ? null : currentMonth}
+                selectedYear={currentYear}
+                onPriceChange={setCurrentPrices}
+              />
+            )}
+          </>
         )}
       </div>
 
+      {/* Conteúdo principal por aba */}
       {activeView === "reports" && (
         <div className="report-list-view">
           <h2>
             Relatório - {currentYear}
-            {reportFilters.month === ALL ? " - Todos os meses" : ` - ${new Date(currentYear, currentMonth - 1).toLocaleString("pt-BR", { month: "long" })}`}
-            {currentCostCenter === ALL ? " - Todos os Centros" : (() => {
-              const cc = costCenters.find((c) => String(c.idcentrocusto) === String(currentCostCenter));
-              return cc ? ` - CC: ${cc.codigo ? cc.codigo + " - " : ""}${cc.nome}` : "";
-            })()}
+            {reportFilters.month === ALL
+              ? " - Todos os meses"
+              : ` - ${new Date(currentYear, currentMonth - 1).toLocaleString("pt-BR", { month: "long" })}`}
+            {currentCostCenter === ALL
+              ? " - Todos os Centros"
+              : (() => {
+                  const cc = costCenters.find((c) => String(c.idcentrocusto) === String(currentCostCenter));
+                  return cc ? ` - CC: ${cc.codigo ? cc.codigo + " - " : ""}${cc.nome}` : "";
+                })()}
           </h2>
 
           <table className="report-table">
             <thead>
-              <tr><th>Agrupador</th><th>Receita</th><th>Despesas</th><th>Resultado</th></tr>
+              <tr>
+                <th>Agrupador</th>
+                <th>Receita</th>
+                <th>Despesas</th>
+                <th>Resultado</th>
+              </tr>
             </thead>
             <tbody>
-              {Object.values(aggregators).map((col) => {
-                const ids = col.id === "unassigned"
-                  ? Object.keys(accounts).filter((id) => Object.values(aggregators).filter((a) => a.id !== "unassigned").every((a) => !(a.accountIds || []).includes(id)))
-                  : (col.accountIds || []).filter((id) => accounts[id]);
+              {(() => {
+                const aggs = Object.values(aggregators);
+                let totalRec = 0, totalDesp = 0;
 
-                const rec = ids.reduce((s, id) => s + (accounts[id]?.sign === "+" ? accounts[id].valor : 0), 0);
-                const desp = ids.reduce((s, id) => s + (accounts[id]?.sign === "-" ? accounts[id].valor : 0), 0);
-                const res = rec - desp;
+                return aggs.map((col) => {
+                  // Se "unassigned", mostra as contas que não estão em nenhum agrupador
+                  const ids = col.id === "unassigned"
+                    ? Object.keys(accounts).filter((id) =>
+                        aggs
+                          .filter((a) => a.id !== "unassigned")
+                          .every((a) => !(a.accountIds || []).includes(id))
+                      )
+                    : (col.accountIds || []).filter((id) => accounts[id]);
 
-                return (
-                  <tr key={col.id}>
-                    <td>{col.title}</td>
-                    <td>{formatValue(rec)}</td>
-                    <td>{formatValue(-desp)}</td>
-                    <td>{formatValue(res)}</td>
-                  </tr>
-                );
-              })}
+                  const rec = ids.reduce((s, id) => s + (accounts[id]?.sign === "+" ? accounts[id].valor : 0), 0);
+                  const desp = ids.reduce((s, id) => s + (accounts[id]?.sign === "-" ? accounts[id].valor : 0), 0);
+                  const res = rec - desp;
+                  totalRec += rec;
+                  totalDesp += desp;
+
+                  return (
+                    <React.Fragment key={col.id}>
+                      <tr
+                        className="report-header-row"
+                        onClick={() => setExpanded((p) => ({ ...p, [col.id]: !p[col.id] }))}
+                        style={{ cursor: "pointer" }}
+                      >
+                        <td>{col.title}</td>
+                        <td style={{ color: "var(--accent)" }}>{formatValue(rec)}</td>
+                        <td style={{ color: "var(--danger)" }}>{formatValue(-desp)}</td>
+                        <td style={{ color: res < 0 ? "var(--danger)" : "var(--accent)" }}>
+                          {formatValue(res)}
+                        </td>
+                      </tr>
+
+                      {expanded[col.id] && ids.map((id) => {
+                        const a = accounts[id];
+                        if (!a) return null;
+                        const recA = a.sign === "+" ? a.valor : 0;
+                        const despA = a.sign === "-" ? a.valor : 0;
+                        const resA = recA - despA;
+                        return (
+                          <tr key={id} className="report-account-row">
+                            <td style={{ paddingLeft: 20 }}>{a.name}</td>
+                            <td style={{ color: "var(--accent)" }}>{formatValue(recA)}</td>
+                            <td style={{ color: "var(--danger)" }}>{formatValue(-despA)}</td>
+                            <td style={{ color: resA < 0 ? "var(--danger)" : "var(--accent)" }}>
+                              {formatValue(resA)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                }).concat([
+                  (() => {
+                    const totRes = totalRec - totalDesp;
+                    return (
+                      <tr key="totalizador" className="report-total-row" style={{ fontWeight: 600 }}>
+                        <td>Totalizador</td>
+                        <td style={{ color: "var(--accent)" }}>{formatValue(totalRec)}</td>
+                        <td style={{ color: "var(--danger)" }}>{formatValue(-totalDesp)}</td>
+                        <td style={{ color: totRes < 0 ? "var(--danger)" : "var(--accent)" }}>
+                          {formatValue(totRes)}
+                        </td>
+                      </tr>
+                    );
+                  })()
+                ]);
+              })()}
             </tbody>
           </table>
         </div>
       )}
 
       {activeView === "groups" && (
-        <DragDropContext onDragEnd={() => {}}>
+        <DragDropContext onDragEnd={onDragEnd}>
           <div className="grid">
-            {Object.values(aggregators).map((col) => (
-              <Droppable key={col.id} droppableId={col.id}>
-                {(provided) => (
-                  <div ref={provided.innerRef} {...provided.droppableProps} className="column">
-                    <h2>{col.title}</h2>
-                    {provided.placeholder}
-                  </div>
-                )}
-              </Droppable>
-            ))}
+            {Object.values(aggregators).map((col) => {
+              // Prepara as contas visíveis em cada coluna
+              const otherAssigned = Object.values(aggregators)
+                .filter((a) => a.id !== "unassigned")
+                .flatMap((a) => a.accountIds || []);
+
+              const validIds = col.id === "unassigned"
+                ? Object.keys(accounts).filter((id) => !otherAssigned.includes(id))
+                : (col.accountIds || []).filter((id) => accounts[id]);
+
+              // Total só para feedback visual
+              const total = validIds.reduce(
+                (sum, id) => sum + (accounts[id]?.sign === "+" ? accounts[id].valor : -accounts[id].valor),
+                0
+              );
+
+              return (
+                <Droppable key={col.id} droppableId={col.id}>
+                  {(provided) => (
+                    <div ref={provided.innerRef} {...provided.droppableProps} className="column">
+                      <h2>{col.title}</h2>
+                      <div className="aggregator-total">
+                        Total: {formatValue(Math.abs(total))}
+                      </div>
+
+                      {validIds.map((acctId, i) => (
+                        <Draggable key={acctId} draggableId={acctId} index={i}>
+                          {(prov) => (
+                            <div
+                              ref={prov.innerRef}
+                              {...prov.draggableProps}
+                              {...prov.dragHandleProps}
+                              className="card"
+                            >
+                              <div className="card-header">
+                                <span className="description">{accounts[acctId]?.name}</span>
+                              </div>
+                              <div className="card-body">
+                                Resultado: {formatValue(
+                                  accounts[acctId]?.sign === "+" ? accounts[acctId].valor : -accounts[acctId].valor
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </Draggable>
+                      ))}
+                      {provided.placeholder}
+                    </div>
+                  )}
+                </Droppable>
+              );
+            })}
           </div>
         </DragDropContext>
+      )}
+
+      {activeView === "import" && (
+        <div className="report-list-view">
+          <h2>Importar balancete</h2>
+          {loading && <p>Processando...</p>}
+        </div>
       )}
     </div>
   );
