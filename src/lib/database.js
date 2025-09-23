@@ -1,4 +1,4 @@
-// src/lib/database.js
+// /src/lib/database.js
 // Cliente: só chama as rotas /api via fetch. Nada de neon aqui.
 const j = (r) => {
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -23,14 +23,16 @@ export const db = {
   /**
    * Lê movimentações. Filtros:
    * - mes: 1..12 ou null (null => todos os meses)
-   * - ano: obrigatório para relatórios (padrão: null não filtra)
+   * - ano: número ou null (null => todos os anos)
    * - cc: id do centro de custo ou null (null => todos)
+   * - empresa: "1" | "7" | "all" | null (null => ambas)
    */
-  getMovimentacoes(mes = null, ano = null, cc = null) {
+  getMovimentacoes(mes = null, ano = null, cc = null, empresa = null) {
     const qs = new URLSearchParams();
     if (ano != null) qs.set('ano', ano);
     if (mes != null) qs.set('mes', mes);
-    if (cc  != null) qs.set('cc', cc);   // <- o server espera 'cc'
+    if (cc  != null) qs.set('centro', cc);     // <- API espera 'centro'
+    if (empresa != null) qs.set('empresa', empresa); // <- "1" | "7" | "all"
     const url = qs.toString() ? `/api/movimentacoes?${qs}` : '/api/movimentacoes';
     return fetch(url).then(j);
   },
@@ -38,12 +40,14 @@ export const db = {
   /**
    * Insere lote de movimentações (NÃO apaga nada; o servidor só dá INSERT).
    * movimentacoes: [{ idconta, debito, credito, idcentrocusto?, centrocusto_nome?, centrocusto_codigo? }, ...]
+   * mes, ano: números
+   * empresa: "1" | "7"
    */
-  saveMovimentacoes(movimentacoes, mes, ano) {
+  saveMovimentacoes(movimentacoes, mes, ano, empresa) {
     return fetch('/api/movimentacoes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ movimentacoes, mes, ano }),
+      body: JSON.stringify({ movimentacoes, mes, ano, empresa }),
     }).then(j);
   },
 
@@ -69,8 +73,8 @@ export const db = {
   },
 
   /**
-   * Mapeamento global Conta→Agrupador (sem mês/ano).
-   * O servidor deve retornar algo como [{ idconta, idagrupador }, ...]
+   * Mapeamento global Conta→Agrupador (sem mês/ano/empresa).
+   * Retorna algo como [{ idconta, idagrupador }, ...]
    */
   getAgrupadorContas() {
     return fetch('/api/agrupadores/contas').then(j);
@@ -113,12 +117,12 @@ export const db = {
     return fetch('/api/admin/clear', { method: 'POST' }).then(j);
   },
 
-  // Evita erro em telas que chamam isso. Implemente rota própria quando quiser.
+  // opcional: evita erro em telas que chamam
   getAvailablePeriods() {
     return Promise.resolve([]);
   },
 
-  // No-op para compat (se algum lugar chamar).
+  // no-op para compat se alguém chamar
   syncAgrupadorToAllMonths() {
     return Promise.resolve({ ok: true });
   },
