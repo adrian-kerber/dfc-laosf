@@ -42,6 +42,9 @@ const readSavedFilters = () => {
 };
 
 export default function App() {
+  // Sidebar retrátil (default fechada)
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   // Empresa usada no IMPORT (salva junto nas movimentações)
   const [company, setCompany] = useState(() => localStorage.getItem(LS_COMPANY) || COMPANIES[0].id);
   const [activeView, setActiveView] = useState("reports");
@@ -154,9 +157,9 @@ export default function App() {
 
       movs.forEach((m) => {
         if (!contasMap[m.idconta]) {
-          contasMap[m.idconta] = { id: m.idconta, name: m.nome || `Conta ${m.idconta}`, valor: 0, sign: "+" };
-        } else if (m.nome) {
-          contasMap[m.idconta].name = m.nome;
+          contasMap[m.idconta] = { id: m.idconta, name: m.nome || m.conta_nome || `Conta ${m.idconta}`, valor: 0, sign: "+" };
+        } else if (m.nome || m.conta_nome) {
+          contasMap[m.idconta].name = m.nome || m.conta_nome;
         }
         const delta = (Number(m.credito) || 0) - (Number(m.debito) || 0);
         const atual = (contasMap[m.idconta].sign === "+" ? 1 : -1) * contasMap[m.idconta].valor;
@@ -261,7 +264,7 @@ export default function App() {
     }));
   };
 
-  // Importação (insere)
+  // Importação (insere) — sem upsert de contas no cliente
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -278,7 +281,7 @@ export default function App() {
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
       if (!rows.length) return alert("Planilha vazia.");
 
-      // 1) CC
+      // 1) CC (opcional)
       const centro = extractCostCenter(rows);
       let idCC = null;
       if (centro) {
@@ -288,18 +291,17 @@ export default function App() {
         } catch (e1) { console.warn("upsertCentroCusto falhou:", e1?.message || e1); }
       }
 
-      // 2) cabeçalho
+      // 2) Cabeçalho
       let headerIdx = -1;
       for (let i = 0; i < Math.min(rows.length, 60); i++) {
         const r = rows[i].map(norm);
         const hasDeb = r.some((c) => c.includes("débito") || c.includes("debito"));
         const hasCred = r.some((c) => c.includes("crédito") || c.includes("credito"));
-        const hasConta = r.some((c) => c.includes("conta"));
         const hasCodigo = r.some((c) => c.includes("código") || c.includes("codigo"));
         const hasDesc = r.some((c) => c.includes("descrição") || c.includes("descricao"));
-        if (hasDeb && hasCred && (hasConta || hasCodigo) && hasDesc) { headerIdx = i; break; }
+        if (hasDeb && hasCred && (hasCodigo) && hasDesc) { headerIdx = i; break; }
       }
-      if (headerIdx === -1) return alert("Não encontrei cabeçalhos (Conta/Código/Descrição/Débito/Crédito).");
+      if (headerIdx === -1) return alert("Não encontrei cabeçalhos (Código/Descrição/Débito/Crédito).");
 
       const header = rows[headerIdx];
       const colCodigo = findCol(header, ["código","codigo"]);
@@ -308,7 +310,7 @@ export default function App() {
       const colCred = findCol(header, ["crédito","credito"]);
       if (colDeb === -1 || colCred === -1) return alert("Colunas de Débito/Crédito não encontradas.");
 
-      // 3) lote
+      // 3) Lote de movimentações
       const newAccounts = {};
       const movimentacoes = [];
 
@@ -320,53 +322,38 @@ export default function App() {
         if (!codigoRaw || !/^\d+$/.test(codigoRaw)) continue;
 
         const id = codigoRaw;
-
-        // Descrição (nome da conta)
         const descricaoPlanilha = colDescricao !== -1 ? String(row[colDescricao] || "").trim() : "";
 
-        // Primeiro calcula os valores (evita ReferenceError)
-        const deb  = parseBRNumber(row[colDeb]);
-        const cred = parseBRNumber(row[colCred]);
+        // *** INVERTE CRÉDITO/DEBITO ***
+        // Na planilha: Crédito = receita, Débito = despesa/saída.
+        // No nosso modelo: 'credito' (entrada), 'debito' (saída).
+        const deb = parseBRNumber(row[colCred]); // vira débito
+        const cred = parseBRNumber(row[colDeb]); // vira crédito
         if (deb === 0 && cred === 0) continue;
 
-        // Garante catálogo de contas
-        let idconta = id;
-        let nomeConta = descricaoPlanilha || `Conta ${id}`;
-        try {
-          const conta = await db.upsertConta({ id, name: nomeConta });
-          idconta = conta?.idconta ?? id;
-          if (conta?.nome) nomeConta = conta.nome;
-        } catch (e2) {
-          console.warn("upsertConta falhou:", e2?.message || e2);
-        }
-
-        // Movimentação
         movimentacoes.push({
-  idconta,
-  mes: selectedMonth,
-  ano: selectedYear,
-  debito: deb,
-  credito: cred,
-  idcentrocusto: idCC,
-  centrocusto_nome: centro?.nome ?? null,
-  centrocusto_codigo: centro?.id ?? null,
-  conta_nome: nomeConta,           // <<--- mande o nome da planilha
-});
+          idconta: id,
+          mes: selectedMonth,
+          ano: selectedYear,
+          debito: deb,
+          credito: cred,
+          idcentrocusto: idCC,
+          centrocusto_nome: centro?.nome ?? null,
+          centrocusto_codigo: centro?.id ?? null,
+          conta_nome: descricaoPlanilha || `Conta ${id}`,
+        });
 
-
-        // Feedback imediato
         const val = cred - deb;
-        newAccounts[idconta] = {
-          id: idconta,
-          name: nomeConta,
+        newAccounts[id] = {
+          id,
+          name: descricaoPlanilha || `Conta ${id}`,
           valor: Math.abs(val),
           sign: val >= 0 ? "+" : "-",
         };
       }
 
-      // 4) grava (INSERE) + empresa do import
-  await db.saveMovimentacoes(movimentacoes, selectedMonth, selectedYear, company); // 'company' vira 'empresa' no backend
-
+      // 4) Grava (INSERE) + empresa do import
+      await db.saveMovimentacoes(movimentacoes, selectedMonth, selectedYear, company);
 
       // 5) UI rápida
       setAccounts(newAccounts);
@@ -374,7 +361,7 @@ export default function App() {
         unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: Object.keys(newAccounts) },
       });
 
-      // 6) alinhar filtros
+      // 6) Alinhar filtros
       setCurrentMonth(selectedMonth);
       setCurrentYear(selectedYear);
       setReportFilters((p) => ({ ...p, month: selectedMonth, year: selectedYear }));
@@ -403,131 +390,140 @@ export default function App() {
 
   return (
     <div className="container">
-      <div className="sidebar">
-        <h1>DFC Enhanced</h1>
+      {/* Botão toggle da sidebar */}
+      <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
+        {sidebarOpen ? "Fechar Menu" : "Abrir Menu"}
+      </button>
 
-        {/* Empresa do arquivo (IMPORT) */}
-        <h2>Empresa (Importação)</h2>
-        <select value={company} onChange={(e) => setCompany(e.target.value)}>
-          {COMPANIES.map((c) => (
-            <option key={c.id} value={c.id}>{c.id} - {c.name}</option>
-          ))}
-        </select>
+      {sidebarOpen && (
+        <div className="sidebar">
+          <h1>DFC Enhanced</h1>
+          <h2>Empresa (Importação)</h2>
+          <select value={company} onChange={(e) => setCompany(e.target.value)}>
+            {COMPANIES.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.id} - {c.name}
+              </option>
+            ))}
+          </select>
 
-        {/* Abas */}
-        <div className="tabs">
-          {TABS.map((t) => (
-            <button key={t.id} className={`tab-btn ${activeView === t.id ? "active" : ""}`}
-              onClick={() => setActiveView(t.id)}>
-              {t.label}
-            </button>
-          ))}
-        </div>
+          <div className="tabs">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                className={`tab-btn ${activeView === t.id ? "active" : ""}`}
+                onClick={() => setActiveView(t.id)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
 
-        {/* Filtros globais */}
-        <h2>Filtros do Relatório</h2>
+          {/* Filtros globais */}
+          <h2>Filtros do Relatório</h2>
 
-        <label className="label">Mês</label>
-        <select
-          value={String(reportFilters.month)}
-          onChange={(e) => {
-            const v = e.target.value === "all" ? ALL : Number(e.target.value);
-            setReportFilters((p) => ({ ...p, month: v }));
-            if (v !== ALL) setCurrentMonth(v);
-          }}
-        >
-          <option value="all">Todos os meses</option>
-          {MONTHS_PT.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
-        </select>
+          <label className="label">Mês</label>
+          <select
+            value={String(reportFilters.month)}
+            onChange={(e) => {
+              const v = e.target.value === "all" ? ALL : Number(e.target.value);
+              setReportFilters((p) => ({ ...p, month: v }));
+              if (v !== ALL) setCurrentMonth(v);
+            }}
+          >
+            <option value="all">Todos os meses</option>
+            {MONTHS_PT.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+          </select>
 
-        <label className="label" style={{ marginTop: 8 }}>Ano</label>
-        <select
-          value={reportFilters.year}
-          onChange={(e) => {
-            const y = Number(e.target.value);
-            setReportFilters((p) => ({ ...p, year: y }));
-            setCurrentYear(y);
-          }}
-        >
-          {Array.from({ length: 10 }, (_, k) => new Date().getFullYear() - 5 + k)
-            .map((y) => <option key={y} value={y}>{y}</option>)}
-        </select>
+          <label className="label" style={{ marginTop: 8 }}>Ano</label>
+          <select
+            value={reportFilters.year}
+            onChange={(e) => {
+              const y = Number(e.target.value);
+              setReportFilters((p) => ({ ...p, year: y }));
+              setCurrentYear(y);
+            }}
+          >
+            {Array.from({ length: 10 }, (_, k) => new Date().getFullYear() - 5 + k)
+              .map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
 
-        <label className="label" style={{ marginTop: 8 }}>Centro de Custo</label>
-        <select
-          value={String(reportFilters.costCenter)}
-          onChange={(e) => {
-            const cc = e.target.value === "all" ? ALL : e.target.value;
-            setReportFilters((p) => ({ ...p, costCenter: cc }));
-            setCurrentCostCenter(cc);
-          }}
-        >
-          <option value="all">Todos os Centros</option>
-          {costCenters.map((cc) => (
-            <option key={cc.idcentrocusto} value={cc.idcentrocusto}>
-              {cc.codigo ? `${cc.codigo} - ` : ""}{cc.nome}
-            </option>
-          ))}
-        </select>
+          <label className="label" style={{ marginTop: 8 }}>Centro de Custo</label>
+          <select
+            value={String(reportFilters.costCenter)}
+            onChange={(e) => {
+              const cc = e.target.value === "all" ? ALL : e.target.value;
+              setReportFilters((p) => ({ ...p, costCenter: cc }));
+              setCurrentCostCenter(cc);
+            }}
+          >
+            <option value="all">Todos os Centros</option>
+            {costCenters.map((cc) => (
+              <option key={cc.idcentrocusto} value={cc.idcentrocusto}>
+                {cc.codigo ? `${cc.codigo} - ` : ""}{cc.nome}
+              </option>
+            ))}
+          </select>
 
-        <label className="label" style={{ marginTop: 8 }}>Empresa (Filtro)</label>
-        <select
-          value={String(companyFilter)}
-          onChange={(e) => {
-            const v = e.target.value; // "all" | "1" | "7"
-            setCompanyFilter(v);
-            setReportFilters((p) => ({ ...p, companyFilter: v }));
-          }}
-        >
-          <option value="all">Todas as empresas</option>
-          {COMPANIES.map((c) => (
-            <option key={c.id} value={c.id}>{c.id} - {c.name}</option>
-          ))}
-        </select>
+          <label className="label" style={{ marginTop: 8 }}>Empresa (Filtro)</label>
+          <select
+            value={String(companyFilter)}
+            onChange={(e) => {
+              const v = e.target.value; // "all" | "1" | "7"
+              setCompanyFilter(v);
+              setReportFilters((p) => ({ ...p, companyFilter: v }));
+            }}
+          >
+            <option value="all">Todas as empresas</option>
+            {COMPANIES.map((c) => (
+              <option key={c.id} value={c.id}>{c.id} - {c.name}</option>
+            ))}
+          </select>
 
-        <h2 style={{ marginTop: 12 }}>Unidade de Medida</h2>
-        <select value={unit} onChange={(e) => setUnit(e.target.value)}>
-          <option value="reais">Reais (R$)</option>
-          <option value="soja">Sacas de Soja</option>
-          <option value="milho">Sacas de Milho</option>
-          <option value="suino">Kg de Suíno</option>
-        </select>
-        {unit !== "reais" && (
-          <PriceManager
-            selectedMonth={reportFilters.month === ALL ? null : currentMonth}
-            selectedYear={currentYear}
-            onPriceChange={setCurrentPrices}
-          />
-        )}
-
-        {activeView === "import" && (
-          <>
-            <hr className="sidebar-sep" />
-            <MonthYearSelector
-              selectedMonth={selectedMonth}
-              selectedYear={selectedYear}
-              onMonthChange={setSelectedMonth}
-              onYearChange={setSelectedYear}
-              label="Período para Importação"
+          <h2 style={{ marginTop: 12 }}>Unidade de Medida</h2>
+          <select value={unit} onChange={(e) => setUnit(e.target.value)}>
+            <option value="reais">Reais (R$)</option>
+            <option value="soja">Sacas de Soja</option>
+            <option value="milho">Sacas de Milho</option>
+            <option value="suino">Kg de Suíno</option>
+          </select>
+          {unit !== "reais" && (
+            <PriceManager
+              selectedMonth={reportFilters.month === ALL ? null : currentMonth}
+              selectedYear={currentYear}
+              onPriceChange={setCurrentPrices}
             />
-            <div className="file-upload">
-              <h3>Importar Balancete</h3>
-              <p>Período: {selectedMonth}/{selectedYear} — Empresa: {company}</p>
-              <input ref={fileInputRef} type="file" accept=".xls,.xlsx" onChange={handleFile} />
-              {loading && <span>Carregando...</span>}
-            </div>
-            <DataManager onDataChange={loadMonthData} />
-          </>
-        )}
+          )}
 
-        {activeView === "groups" && (
-          <>
-            <hr className="sidebar-sep" />
-            <AggregatorConfig aggregators={aggregators} onChanged={loadMonthData} />
-            <button onClick={handleSaveGroups} className="btn-save">Salvar agrupadores</button>
-          </>
-        )}
-      </div>
+          {activeView === "import" && (
+            <>
+              <hr className="sidebar-sep" />
+              <MonthYearSelector
+                selectedMonth={selectedMonth}
+                selectedYear={selectedYear}
+                onMonthChange={setSelectedMonth}
+                onYearChange={setSelectedYear}
+                label="Período para Importação"
+              />
+              <div className="file-upload">
+                <h3>Importar Balancete</h3>
+                <p>Período: {selectedMonth}/{selectedYear} — Empresa: {company}</p>
+                <input ref={fileInputRef} type="file" accept=".xls,.xlsx" onChange={handleFile} />
+                {loading && <span>Carregando...</span>}
+              </div>
+              <DataManager onDataChange={loadMonthData} />
+            </>
+          )}
+
+          {activeView === "groups" && (
+            <>
+              <hr className="sidebar-sep" />
+              <AggregatorConfig aggregators={aggregators} onChanged={loadMonthData} />
+              <button onClick={handleSaveGroups} className="btn-save">Salvar agrupadores</button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Conteúdo principal */}
       {activeView === "reports" && (
