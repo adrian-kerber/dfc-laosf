@@ -110,6 +110,15 @@ export default function App() {
     return -1;
   };
 
+  // Alternar manualmente o sinal de uma conta (UI)
+  const toggleSign = (id) => {
+    setAccounts((prev) => {
+      if (!prev[id]) return prev;
+      const nextSign = prev[id].sign === "+" ? "-" : "+";
+      return { ...prev, [id]: { ...prev[id], sign: nextSign } };
+    });
+  };
+
   // tenta ler "Centro de Custo" do topo da planilha
   const extractCostCenter = (rows) => {
     const MAX = Math.min(rows.length, 30);
@@ -164,7 +173,7 @@ export default function App() {
 
       const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empresaParam);
 
-      // 4) acumula por conta
+      // 4) acumula por conta (sinal real)
       Object.values(contasMap).forEach((c) => { c.valor = 0; c.sign = "+"; });
       movs.forEach((m) => {
         if (!contasMap[m.idconta]) return;
@@ -549,7 +558,7 @@ export default function App() {
         )}
       </div>
 
-      {/* Conteúdo principal */}
+      {/* ====== CONTEÚDO PRINCIPAL ====== */}
       {activeView === "reports" && (
         <div className="report-list-view">
           <h2>
@@ -675,32 +684,48 @@ export default function App() {
                   {(provided) => (
                     <div ref={provided.innerRef} {...provided.droppableProps} className="column">
                       <h2>{col.title}</h2>
-                      <div className="aggregator-total">Total: {formatValue(Math.abs(total))}</div>
+                      <div
+                        className="aggregator-total"
+                        style={{ color: total < 0 ? "var(--danger)" : "var(--accent)" }}
+                      >
+                        Total: {formatValue(total)}
+                      </div>
 
-                      {validIds.map((acctId, i) => (
-                        <Draggable key={acctId} draggableId={acctId} index={i}>
-                          {(prov) => (
-                            <div
-                              ref={prov.innerRef}
-                              {...prov.draggableProps}
-                              {...prov.dragHandleProps}
-                              className="card"
-                            >
-                              <div className="card-header">
-                                <span className="description">{accounts[acctId]?.name}</span>
+                      {validIds.map((acctId, i) => {
+                        const resVal =
+                          accounts[acctId]?.sign === "+"
+                            ? accounts[acctId].valor
+                            : -accounts[acctId].valor;
+                        return (
+                          <Draggable key={acctId} draggableId={acctId} index={i}>
+                            {(prov) => (
+                              <div
+                                ref={prov.innerRef}
+                                {...prov.draggableProps}
+                                {...prov.dragHandleProps}
+                                className="card"
+                              >
+                                <div className="card-header">
+                                  <span className="description">{accounts[acctId]?.name}</span>
+                                  <button
+                                    onClick={() => toggleSign(acctId)}
+                                    className="sign-btn"
+                                    title="Alternar sinal"
+                                  >
+                                    {accounts[acctId]?.sign}
+                                  </button>
+                                </div>
+                                <div
+                                  className="card-body"
+                                  style={{ color: resVal < 0 ? "var(--danger)" : "var(--accent)" }}
+                                >
+                                  Resultado: {formatValue(resVal)}
+                                </div>
                               </div>
-                              <div className="card-body">
-                                Resultado:{" "}
-                                {formatValue(
-                                  accounts[acctId]?.sign === "+"
-                                    ? accounts[acctId].valor
-                                    : -accounts[acctId].valor
-                                )}
-                              </div>
-                            </div>
-                          )}
-                        </Draggable>
-                      ))}
+                            )}
+                          </Draggable>
+                        );
+                      })}
                       {provided.placeholder}
                     </div>
                   )}
