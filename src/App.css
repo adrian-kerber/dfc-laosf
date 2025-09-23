@@ -1,6 +1,6 @@
-/* src/App.css - Polished Dark Mode with Sidebar Toggle, Drag&Drop and Report */
+/* src/App.css - Polished Dark Mode with Sidebar, Drag&Drop and Report */
 
-/* Google Font */
+/* Import Google Font */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 :root {
@@ -16,6 +16,9 @@
   --text-secondary: #a0a0a0;
   --border: #2a2a2a;
   --radius: 8px;
+
+  /* distancia que o thead “respeita” antes de grudar (título + padding) */
+  --sticky-offset: 64px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -28,53 +31,53 @@ body {
   overflow: hidden;
 }
 
-/* ====== Layout base ====== */
+/* Layout */
 .container {
+  display: grid;
+  grid-template-columns: 280px 1fr;
   height: 100vh;
-  overflow: hidden;
 }
 
-/* ====== Botão para abrir/fechar sidebar ====== */
+/* Sidebar */
+.sidebar {
+  background: var(--surface);
+  padding: 24px 16px;
+  border-right: 1px solid var(--border);
+  height: 100vh;
+  overflow-y: auto;
+}
+
+/* Botão flutuante de abrir/fechar menu */
 .sidebar-toggle {
   position: fixed;
   top: 16px;
   left: 16px;
-  z-index: 1100;
-  padding: 10px 14px;
-  border: none;
-  border-radius: var(--radius);
+  z-index: 1000;
   background: var(--primary);
   color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 10px 14px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 4px 16px rgba(0,0,0,.35);
-  transition: background .2s, transform .06s;
+  box-shadow: 0 4px 10px rgba(0,0,0,.35);
 }
 .sidebar-toggle:hover { background: var(--primary-hover); }
-.sidebar-toggle:active { transform: translateY(1px); }
 
-/* ====== Sidebar estilo “drawer” (sobrepõe conteúdo) ====== */
-.sidebar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 300px;
-  max-width: 90vw;
-  height: 100vh;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  padding: 24px 16px;
+/* Main (quando não é grid de DnD) */
+.grid {
+  padding: 24px;
+  background: var(--bg);
   overflow-y: auto;
-  z-index: 1050;
-  box-shadow: 0 20px 60px rgba(0,0,0,.55);
 }
 
+/* Headings */
 h1, h2 { text-align: center; margin-bottom: 16px; }
 h1 { font-size: 2rem; font-weight: 600; }
 h2 { font-size: 1.25rem; font-weight: 500; color: var(--text-secondary); }
 
-/* ====== Controles dentro da sidebar ====== */
-.sidebar select,
+/* Controles da sidebar */
+select,
 .sidebar input[type='text'] {
   width: 100%;
   padding: 8px;
@@ -86,13 +89,10 @@ h2 { font-size: 1.25rem; font-weight: 500; color: var(--text-secondary); }
   font-size: 1rem;
 }
 
-/* Botões comuns da sidebar */
-.sidebar .tab-btn,
-.sidebar .file-upload input[type='file'],
-.sidebar button:not(.btn-save):not(.btn-clear) {
+.sidebar .tab-btn {
   width: 100%;
   padding: 10px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   background: var(--primary);
   color: #fff;
   border: none;
@@ -101,51 +101,47 @@ h2 { font-size: 1.25rem; font-weight: 500; color: var(--text-secondary); }
   cursor: pointer;
   transition: background .2s;
 }
-.sidebar .tab-btn:hover,
-.sidebar .file-upload input[type='file']:hover,
-.sidebar button:not(.btn-save):not(.btn-clear):hover {
-  background: var(--primary-hover);
-}
+.sidebar .tab-btn.active,
+.sidebar .tab-btn:hover { background: var(--primary-hover); }
 
-/* Abas */
-.tabs { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 12px; }
-.tab-btn.active { background: var(--accent); }
-.tab-btn.active:hover { background: var(--accent-hover); }
-
-/* ====== Área principal (listas/relatórios/grades) ====== */
-.report-list-view,
-.grid {
-  position: relative;
-  height: 100vh;
-  overflow-y: auto;
-  padding: 24px;
-  padding-top: 70px; /* dá espaço pro botão fixo */
-  background: var(--bg);
-}
-.report-table th {
-  background: var(--surface);
-  color: var(--accent);
-  font-weight: 600;
-  position: sticky;
-  top: 100px;  /* estava 70px, aumenta pra descolar do título */
-  z-index: 2;
-}
-
-.report-list-view h2 {
-  margin-bottom: 24px; /* antes estava 0 */
-  display: block;
+/* Upload */
+.file-upload input[type='file'] {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 24px;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
   text-align: center;
+  font-size: 1rem;
 }
 
+/* Ações */
+.actions { text-align: center; margin-bottom: 24px; }
+.btn-save, .btn-clear {
+  display: inline-block;
+  padding: 10px 20px;
+  margin: 4px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background .2s;
+}
+.btn-save { background: var(--accent); color: var(--text-primary); }
+.btn-save:hover { background: var(--accent-hover); }
+.btn-clear { background: var(--danger); color: var(--text-primary); }
+.btn-clear:hover { background: #dc2626; }
 
-/* ====== Grid de DnD ====== */
+/* Drag&Drop (Agrupadores) */
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 20px;
 }
 
-/* Colunas / Agrupadores */
 .column {
   background: var(--card-bg);
   border: 1px solid var(--border);
@@ -153,14 +149,10 @@ h2 { font-size: 1.25rem; font-weight: 500; color: var(--text-secondary); }
   padding: 16px;
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 96px);
+  max-height: calc(100vh);
   overflow-y: auto;
 }
-.column h2 {
-  margin-bottom: 12px;
-  color: var(--accent);
-  text-align: center;
-}
+.column h2 { margin-bottom: 12px; color: var(--accent); text-align: center; }
 .aggregator-total {
   margin-bottom: 12px;
   color: var(--text-secondary);
@@ -168,7 +160,7 @@ h2 { font-size: 1.25rem; font-weight: 500; color: var(--text-secondary); }
   text-align: center;
 }
 
-/* Card de conta */
+/* Cards de conta */
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -187,57 +179,103 @@ h2 { font-size: 1.25rem; font-weight: 500; color: var(--text-secondary); }
 .sign-btn {
   background: var(--primary);
   color: #fff;
-  width: 30px; height: 30px;
-  border: none; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
 }
 .sign-btn:hover { background: var(--primary-hover); }
 .card-body { color: var(--text-secondary); }
 
-/* ====== Tabela de relatório ====== */
-.report-table { width: 100%; border-collapse: collapse; }
-.report-table th,
-.report-table td {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  text-align: left;
+/* ==== RELATÓRIO (tabela) ==== */
+
+.report-list-view {
+  position: relative;
+  height: 100vh;          /* ocupa a coluna inteira */
+  overflow: auto;         /* scroll vertical aqui -> sticky funciona certo */
+  padding: 24px;
 }
-.report-table th {
+
+/* dá um respiro pra não colar na área sticky */
+.report-list-view h2 {
+  margin: 0 0 16px 0;
+  line-height: 1.25;
+}
+
+/* tabelona */
+.report-table {
+  width: 100%;
+  border-collapse: separate;  /* evita “colar” com sticky */
+  border-spacing: 0;
+}
+
+/* cabeçalho grudado e com offset seguro */
+.report-table thead th {
+  padding: 12px 16px;
   background: var(--surface);
   color: var(--accent);
   font-weight: 600;
-  position: sticky; top: 70px; z-index: 2;
+  position: sticky;
+  top: var(--sticky-offset);   /* <<< distância do topo */
+  z-index: 5;                  /* fica por cima das linhas */
+  border-bottom: 1px solid var(--border);
 }
+
+/* sombra suave sob o cabeçalho para evidenciar separação */
+.report-table thead th::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -1px; height: 1px;
+  box-shadow: 0 8px 10px rgba(0,0,0,.25);
+}
+
+/* células */
 .report-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
   background: var(--card-bg);
   color: var(--text-primary);
 }
-.report-table tr.report-header-row:hover { background: var(--surface); cursor: pointer; }
-.report-account-row td { padding-left: 32px; background: var(--bg); color: var(--text-secondary); }
-.report-total-row td { background: var(--surface); font-weight: 600; color: var(--text-primary); }
+
+/* primeira linha do corpo ganha um “respiro” extra
+   para nunca ficar escondida sob o thead sticky */
+.report-table tbody tr:first-child td {
+  padding-top: calc(12px + 6px);
+}
+
+/* hover do header-row (expansível) */
+.report-table tr.report-header-row:hover {
+  background: var(--surface);
+  cursor: pointer;
+}
+
+/* linhas detalhadas */
+.report-account-row td {
+  padding-left: 32px;
+  background: var(--bg);
+  color: var(--text-secondary);
+}
+
+/* totalizador */
+.report-total-row td {
+  background: var(--surface);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* colunas de despesas destacadas em vermelho */
 .report-table td:nth-child(3),
 .report-table th:nth-child(3) { color: var(--danger); }
 
-/* ====== Ações genéricas (salvar/limpar) ====== */
-.actions { text-align: center; margin-bottom: 24px; }
-.actions .btn-save, .actions .btn-clear,
-.btn-save, .btn-clear {
-  display: inline-block;
-  padding: 10px 20px;
-  margin: 4px;
-  border: none;
-  border-radius: var(--radius);
-  font-size: 1rem;
-  cursor: pointer;
-  transition: background .2s;
-}
-.btn-save { background: var(--accent); color: var(--text-primary); }
-.btn-save:hover { background: var(--accent-hover); }
-.btn-clear { background: var(--danger); color: var(--text-primary); }
-.btn-clear:hover { background: #dc2626; }
+/* utilitárias */
+.positive { color: var(--accent); }
+.negative { color: var(--danger); }
 
-/* ====== Scrollbars (webkit) ====== */
+/* Scrollbars (Chrome/Safari) */
 .column::-webkit-scrollbar,
 .report-list-view::-webkit-scrollbar { width: 8px; }
 .column::-webkit-scrollbar-track,
@@ -248,19 +286,10 @@ h2 { font-size: 1.25rem; font-weight: 500; color: var(--text-secondary); }
   border-radius: 4px;
 }
 
-/* ====== Responsivo ====== */
+/* Responsivo */
 @media (max-width: 800px) {
-  .sidebar { width: 100%; max-width: 100%; }
-  .report-list-view, .grid { padding: 20px; padding-top: 70px; }
-}
-
-/* Utilitários */
-.positive { color: var(--accent); }
-.negative { color: var(--danger); }
-
-/* separador simples */
-.sidebar-sep {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 16px 0;
+  .container { grid-template-columns: 1fr; }
+  .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+  .grid { grid-template-columns: 1fr; }
+  :root { --sticky-offset: 56px; } /* um pouquinho menor no mobile */
 }
