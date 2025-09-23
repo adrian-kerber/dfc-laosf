@@ -320,40 +320,50 @@ export default function App() {
         const row = rows[r];
         if (!row || row.length === 0) continue;
 
-        const codigoRaw = colCodigo !== -1 ? String(row[colCodigo] || "").trim() : "";
-        if (!codigoRaw || !/^\d+$/.test(codigoRaw)) continue;
+        // ... dentro do loop de linhas no handleFile
+const codigoRaw = colCodigo !== -1 ? String(row[colCodigo] || "").trim() : "";
+if (!codigoRaw || !/^\d+$/.test(codigoRaw)) continue;
 
-        const id = codigoRaw;
-        const descricao = colDescricao !== -1 ? String(row[colDescricao] || "").trim() : "Sem descrição";
-        const deb = parseBRNumber(row[colDeb]);
-        const cred = parseBRNumber(row[colCred]);
-        if (deb === 0 && cred === 0) continue;
+const id = codigoRaw;
 
-        // catálogo de contas (upsert)
-        let idconta = id;
-        try {
-          const conta = await db.upsertConta({ id, name: descricao });
-          idconta = conta?.idconta ?? id;
-        } catch (e2) { console.warn("upsertConta falhou:", e2?.message || e2); }
+// Pega a DESCRIÇÃO da planilha (se não houver, cai num fallback)
+const descricaoPlanilha = colDescricao !== -1
+  ? String(row[colDescricao] || "").trim()
+  : "";
 
-        movimentacoes.push({
-          idconta,
-          mes: selectedMonth,
-          ano: selectedYear,
-          debito: deb,
-          credito: cred,
-          idcentrocusto: idCC,
-          centrocusto_nome: centro?.nome ?? null,
-          centrocusto_codigo: centro?.id ?? null,
-        });
+// garante catálogo de contas (tentamos usar a descrição da planilha)
+let idconta = id;
+let nomeConta = descricaoPlanilha || `Conta ${id}`;
+try {
+  const conta = await db.upsertConta({ id, name: nomeConta });
+  idconta = conta?.idconta ?? id;
+  // se o backend retornar o nome, preferimos ele
+  if (conta?.nome) nomeConta = conta.nome;
+} catch (e2) {
+  console.warn("upsertConta falhou:", e2?.message || e2);
+}
 
-        const val = cred - deb;
-        newAccounts[idconta] = {
-          id: idconta,
-          name: descricao,
-          valor: Math.abs(val),
-          sign: val >= 0 ? "+" : "-",
-        };
+// movimentação…
+movimentacoes.push({
+  idconta,
+  mes: selectedMonth,
+  ano: selectedYear,
+  debito: deb,
+  credito: cred,
+  idcentrocusto: idCC,
+  centrocusto_nome: centro?.nome ?? null,
+  centrocusto_codigo: centro?.id ?? null,
+});
+
+// valor para feedback pós-import
+const val = cred - deb;
+newAccounts[idconta] = {
+  id: idconta,
+  name: nomeConta,       // <- usa o nome correto
+  valor: Math.abs(val),
+  sign: val >= 0 ? "+" : "-",
+};
+
       }
 
       // 4) grava (INSERE) + empresa do import
