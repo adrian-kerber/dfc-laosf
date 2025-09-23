@@ -1,37 +1,34 @@
-/* src/index.css — reset enxuto para app full-viewport */
+/* src/index.css — versão fullscreen */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-/* Ocupa toda a viewport */
+/* Base reset */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
 html, body, #root {
   height: 100%;
+  width: 100%;
 }
 
-/* Deixa o App controlar layout/cores (App.css) */
-:root {
-  color-scheme: dark;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-/* Nada de centrar a página inteira nem min-heights */
+/* Remove centralização do template Vite */
 body {
-  margin: 0;
-  display: block;              /* remove place-items:center do template */
+  display: block;
   background: var(--bg, #121212);
   color: var(--text-primary, #e0e0e0);
   font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-  overflow: hidden;            /* nossa app usa scrolls internos */
+  overflow: hidden; /* scrolls internos controlados no App.css */
 }
 
-/* Links e botões usam o tema do App.css;
-   mantemos apenas um reset suave */
+/* Links e botões seguem App.css */
 a {
   color: inherit;
   text-decoration: none;
 }
+
 button {
   font: inherit;
   cursor: pointer;
@@ -39,14 +36,8 @@ button {
   border: none;
 }
 
-/* Removemos overrides grandes do h1/h2 —
-   os tamanhos vêm do App.css */
+/* Headers ficam padronizados */
 h1, h2, h3, h4, h5, h6 {
   margin: 0;
   font-weight: inherit;
-}
-
-/* Opcional: zera box-sizing global (caso não esteja no App.css) */
-*, *::before, *::after {
-  box-sizing: border-box;
 }
