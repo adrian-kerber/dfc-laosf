@@ -673,7 +673,7 @@ newAccounts[idconta] = {
                             >
                               <div className="card-header">
                                 {/* Exibe código + nome */}
-                                <span className="description">{acctId} – {accounts[acctId]?.name}</span>
+                                <span className="description">{accounts[acctId]?.name || `Conta ${acctId}`}</span>
                                 {/* Botão +/- para inverter sinal visual */}
                                 <button className="sign-btn" onClick={() => toggleAccountSign(acctId)}>
                                   {accounts[acctId]?.sign === "+" ? "+" : "–"}
