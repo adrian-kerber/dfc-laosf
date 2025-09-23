@@ -1,6 +1,6 @@
-/* src/App.css - Polished Dark Mode with Sidebar, Drag&Drop and Report */
+/* src/App.css — Dark + layout que se adapta à sidebar aberta/fechada */
 
-/* Import Google Font */
+/* Fonte */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 :root {
@@ -16,29 +16,46 @@
   --text-secondary: #a0a0a0;
   --border: #2a2a2a;
   --radius: 8px;
-
-  /* distancia que o thead “respeita” antes de grudar (título + padding) */
-  --sticky-offset: 64px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+html, body, #root { height: 100%; width: 100%; }
 body {
   background: var(--bg);
   color: var(--text-primary);
-  font-family: 'Inter', sans-serif;
-  height: 100vh;
-  overflow: hidden;
+  font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  overflow: hidden; /* scrolls controlados dentro das áreas */
 }
 
-/* Layout */
+/* ---------- LAYOUT ---------- */
 .container {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 1fr;           /* default: sem sidebar => 1 coluna cheia */
   height: 100vh;
 }
 
-/* Sidebar */
+/* Quando houver .sidebar como filho direto, vira 2 colunas */
+.container:has(> .sidebar) {
+  grid-template-columns: 280px 1fr;
+}
+
+/* Botão toggle da sidebar */
+.sidebar-toggle {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 50;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.sidebar-toggle:hover { background: var(--primary-hover); }
+
+/* ---------- SIDEBAR ---------- */
 .sidebar {
   background: var(--surface);
   padding: 24px 16px;
@@ -47,37 +64,12 @@ body {
   overflow-y: auto;
 }
 
-/* Botão flutuante de abrir/fechar menu */
-.sidebar-toggle {
-  position: fixed;
-  top: 16px;
-  left: 16px;
-  z-index: 1000;
-  background: var(--primary);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius);
-  padding: 10px 14px;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 4px 10px rgba(0,0,0,.35);
-}
-.sidebar-toggle:hover { background: var(--primary-hover); }
-
-/* Main (quando não é grid de DnD) */
-.grid {
-  padding: 24px;
-  background: var(--bg);
-  overflow-y: auto;
-}
-
-/* Headings */
 h1, h2 { text-align: center; margin-bottom: 16px; }
 h1 { font-size: 2rem; font-weight: 600; }
-h2 { font-size: 1.25rem; font-weight: 500; color: var(--text-secondary); }
+h2 { font-size: 1.1rem; font-weight: 500; color: var(--text-secondary); }
 
-/* Controles da sidebar */
-select,
+/* Controles (sidebar) */
+.sidebar select,
 .sidebar input[type='text'] {
   width: 100%;
   padding: 8px;
@@ -97,15 +89,14 @@ select,
   color: #fff;
   border: none;
   border-radius: var(--radius);
-  font-size: 1rem;
+  font-size: 0.95rem;
   cursor: pointer;
   transition: background .2s;
 }
-.sidebar .tab-btn.active,
+.sidebar .tab-btn.active { filter: brightness(1.05); }
 .sidebar .tab-btn:hover { background: var(--primary-hover); }
 
-/* Upload */
-.file-upload input[type='file'] {
+.file-upload input[type='file']{
   width: 100%;
   padding: 10px;
   margin-bottom: 24px;
@@ -118,29 +109,37 @@ select,
   font-size: 1rem;
 }
 
-/* Ações */
-.actions { text-align: center; margin-bottom: 24px; }
-.btn-save, .btn-clear {
-  display: inline-block;
-  padding: 10px 20px;
-  margin: 4px;
-  border: none;
-  border-radius: var(--radius);
-  font-size: 1rem;
-  cursor: pointer;
-  transition: background .2s;
+.sidebar-sep {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 16px 0;
 }
-.btn-save { background: var(--accent); color: var(--text-primary); }
-.btn-save:hover { background: var(--accent-hover); }
-.btn-clear { background: var(--danger); color: var(--text-primary); }
-.btn-clear:hover { background: #dc2626; }
 
-/* Drag&Drop (Agrupadores) */
+/* ---------- ÁREA PRINCIPAL ---------- */
+/* Quando não há sidebar: conteúdo está na coluna 1; com sidebar: coluna 2 */
+.report-list-view { grid-column: 1; }
+.container:has(> .sidebar) .report-list-view { grid-column: 2; }
+
+/* Padding e scroll da área principal */
+.report-list-view {
+  padding: 24px;
+  height: 100vh;
+  overflow: auto;
+  background: var(--bg);
+}
+
+/* ---------- GRID DnD (tela de agrupadores) ---------- */
 .grid {
+  grid-column: 1;
+  padding: 24px;
+  background: var(--bg);
+  overflow-y: auto;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 20px;
+  height: 100vh;
 }
+.container:has(> .sidebar) .grid { grid-column: 2; }
 
 .column {
   background: var(--card-bg);
@@ -149,147 +148,64 @@ select,
   padding: 16px;
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh);
+  max-height: calc(100vh - 48px);
   overflow-y: auto;
 }
 .column h2 { margin-bottom: 12px; color: var(--accent); text-align: center; }
-.aggregator-total {
-  margin-bottom: 12px;
-  color: var(--text-secondary);
-  font-weight: 600;
-  text-align: center;
-}
+.aggregator-total { margin-bottom: 12px; color: var(--text-secondary); font-weight: 600; text-align: center; }
 
-/* Cards de conta */
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 12px;
   margin-bottom: 12px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  box-shadow: 0 2px 8px rgba(0,0,0,.3);
 }
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
+.card-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
 .description { font-weight: 500; color: var(--text-primary); }
-.sign-btn {
-  background: var(--primary);
-  color: #fff;
-  width: 30px;
-  height: 30px;
-  border: none;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
+.sign-btn{
+  background: var(--primary); color:#fff; width:30px; height:30px; border:none;
+  border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer;
 }
-.sign-btn:hover { background: var(--primary-hover); }
-.card-body { color: var(--text-secondary); }
+.sign-btn:hover{ background: var(--primary-hover); }
+.card-body{ color: var(--text-secondary); }
 
-/* ==== RELATÓRIO (tabela) ==== */
-
-.report-list-view {
-  position: relative;
-  height: 100vh;          /* ocupa a coluna inteira */
-  overflow: auto;         /* scroll vertical aqui -> sticky funciona certo */
-  padding: 24px;
-}
-
-/* dá um respiro pra não colar na área sticky */
-.report-list-view h2 {
-  margin: 0 0 16px 0;
-  line-height: 1.25;
-}
-
-/* tabelona */
-.report-table {
-  width: 100%;
-  border-collapse: separate;  /* evita “colar” com sticky */
-  border-spacing: 0;
-}
-
-/* cabeçalho grudado e com offset seguro */
-.report-table thead th {
-  padding: 12px 16px;
-  background: var(--surface);
-  color: var(--accent);
-  font-weight: 600;
-  position: sticky;
-  top: var(--sticky-offset);   /* <<< distância do topo */
-  z-index: 5;                  /* fica por cima das linhas */
-  border-bottom: 1px solid var(--border);
-}
-
-/* sombra suave sob o cabeçalho para evidenciar separação */
-.report-table thead th::after {
-  content: "";
-  position: absolute;
-  left: 0; right: 0; bottom: -1px; height: 1px;
-  box-shadow: 0 8px 10px rgba(0,0,0,.25);
-}
-
-/* células */
+/* ---------- TABELA (Relatórios) ---------- */
+.report-table { width: 100%; border-collapse: collapse; }
+.report-table th,
 .report-table td {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
+  text-align: left;
   background: var(--card-bg);
-  color: var(--text-primary);
 }
 
-/* primeira linha do corpo ganha um “respiro” extra
-   para nunca ficar escondida sob o thead sticky */
-.report-table tbody tr:first-child td {
-  padding-top: calc(12px + 6px);
-}
-
-/* hover do header-row (expansível) */
-.report-table tr.report-header-row:hover {
+/* Cabeçalho fixo sem cobrir a 1ª linha */
+.report-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   background: var(--surface);
-  cursor: pointer;
-}
-
-/* linhas detalhadas */
-.report-account-row td {
-  padding-left: 32px;
-  background: var(--bg);
-  color: var(--text-secondary);
-}
-
-/* totalizador */
-.report-total-row td {
-  background: var(--surface);
+  color: var(--accent);
   font-weight: 600;
-  color: var(--text-primary);
 }
 
-/* colunas de despesas destacadas em vermelho */
+/* Linhas */
+.report-table tr.report-header-row:hover { background: var(--surface); cursor: pointer; }
+.report-account-row td { padding-left: 32px; background: var(--bg); color: var(--text-secondary); }
+.report-total-row td { background: var(--surface); font-weight: 600; color: var(--text-primary); }
+
+/* Coluna "Despesas" em vermelho */
 .report-table td:nth-child(3),
 .report-table th:nth-child(3) { color: var(--danger); }
 
-/* utilitárias */
+/* Utilitárias */
 .positive { color: var(--accent); }
 .negative { color: var(--danger); }
 
-/* Scrollbars (Chrome/Safari) */
-.column::-webkit-scrollbar,
-.report-list-view::-webkit-scrollbar { width: 8px; }
-.column::-webkit-scrollbar-track,
-.report-list-view::-webkit-scrollbar-track { background: var(--card-bg); }
-.column::-webkit-scrollbar-thumb,
-.report-list-view::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 4px;
-}
-
-/* Responsivo */
+/* ---------- Responsivo ---------- */
 @media (max-width: 800px) {
-  .container { grid-template-columns: 1fr; }
-  .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
-  .grid { grid-template-columns: 1fr; }
-  :root { --sticky-offset: 56px; } /* um pouquinho menor no mobile */
+  .container { grid-template-columns: 1fr !important; }
+  .report-list-view, .grid { grid-column: 1 !important; }
 }
