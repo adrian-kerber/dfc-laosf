@@ -342,15 +342,17 @@ export default function App() {
 
         // Movimentação
         movimentacoes.push({
-          idconta,
-          mes: selectedMonth,
-          ano: selectedYear,
-          debito: deb,
-          credito: cred,
-          idcentrocusto: idCC,
-          centrocusto_nome: centro?.nome ?? null,
-          centrocusto_codigo: centro?.id ?? null,
-        });
+  idconta,
+  mes: selectedMonth,
+  ano: selectedYear,
+  debito: deb,
+  credito: cred,
+  idcentrocusto: idCC,
+  centrocusto_nome: centro?.nome ?? null,
+  centrocusto_codigo: centro?.id ?? null,
+  conta_nome: nomeConta,           // <<--- mande o nome da planilha
+});
+
 
         // Feedback imediato
         const val = cred - deb;
@@ -363,7 +365,8 @@ export default function App() {
       }
 
       // 4) grava (INSERE) + empresa do import
-      await db.saveMovimentacoes(movimentacoes, selectedMonth, selectedYear, company);
+  await db.saveMovimentacoes(movimentacoes, selectedMonth, selectedYear, company); // 'company' vira 'empresa' no backend
+
 
       // 5) UI rápida
       setAccounts(newAccounts);
