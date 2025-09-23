@@ -122,6 +122,14 @@ h2 { font-size: 1.25rem; font-weight: 500; color: var(--text-secondary); }
   padding-top: 70px; /* dá espaço pro botão fixo */
   background: var(--bg);
 }
+.report-table th {
+  background: var(--surface);
+  color: var(--accent);
+  font-weight: 600;
+  position: sticky;
+  top: 100px;  /* estava 70px, aumenta pra descolar do título */
+  z-index: 2;
+}
 
 .report-list-view h2 {
   margin-bottom: 24px; /* antes estava 0 */
