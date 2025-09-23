@@ -123,6 +123,13 @@ h2 { font-size: 1.25rem; font-weight: 500; color: var(--text-secondary); }
   background: var(--bg);
 }
 
+.report-list-view h2 {
+  margin-bottom: 24px; /* antes estava 0 */
+  display: block;
+  text-align: center;
+}
+
+
 /* ====== Grid de DnD ====== */
 .grid {
   display: grid;
