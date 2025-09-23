@@ -73,10 +73,10 @@ export default function App() {
   const [currentPrices, setCurrentPrices] = useState({});
   const [reportFilters, setReportFilters] = useState({
     viewMode: "specific",
-    month: saved?.month ?? currentMonth,
-    year: saved?.year ?? currentYear,
-    costCenter: saved?.costCenter ?? currentCostCenter,
-    companyFilter: saved?.companyFilter ?? companyFilter,
+    month: saved?.month ?? new Date().getMonth() + 1,
+    year: saved?.year ?? new Date().getFullYear(),
+    costCenter: saved?.costCenter ?? ALL,
+    companyFilter: saved?.companyFilter ?? ALL,
   });
 
   const fileInputRef = useRef(null);
@@ -149,18 +149,15 @@ export default function App() {
 
       const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empresaParam);
 
-      // 4) Atualiza nomes a partir do JOIN (se houver) e acumula valores
+      // 4) Atualiza nomes e acumula valores
       Object.values(contasMap).forEach((c) => { c.valor = 0; c.sign = "+"; });
 
       movs.forEach((m) => {
         if (!contasMap[m.idconta]) {
-          // Conta ainda não estava no catálogo (garantia extra)
           contasMap[m.idconta] = { id: m.idconta, name: m.nome || `Conta ${m.idconta}`, valor: 0, sign: "+" };
         } else if (m.nome) {
-          // **AQUI** garantimos que o nome exibido é o nome real vindo do banco
           contasMap[m.idconta].name = m.nome;
         }
-
         const delta = (Number(m.credito) || 0) - (Number(m.debito) || 0);
         const atual = (contasMap[m.idconta].sign === "+" ? 1 : -1) * contasMap[m.idconta].valor;
         const novo = atual + delta;
@@ -240,8 +237,7 @@ export default function App() {
   const toggleAccountSign = (id) => {
     setAccounts((prev) => {
       const a = prev[id]; if (!a) return prev;
-      const novo = { ...prev, [id]: { ...a, sign: a.sign === "+" ? "-" : "+", } };
-      return novo;
+      return { ...prev, [id]: { ...a, sign: a.sign === "+" ? "-" : "+" } };
     });
   };
 
@@ -320,50 +316,50 @@ export default function App() {
         const row = rows[r];
         if (!row || row.length === 0) continue;
 
-        // ... dentro do loop de linhas no handleFile
-const codigoRaw = colCodigo !== -1 ? String(row[colCodigo] || "").trim() : "";
-if (!codigoRaw || !/^\d+$/.test(codigoRaw)) continue;
+        const codigoRaw = colCodigo !== -1 ? String(row[colCodigo] || "").trim() : "";
+        if (!codigoRaw || !/^\d+$/.test(codigoRaw)) continue;
 
-const id = codigoRaw;
+        const id = codigoRaw;
 
-// Pega a DESCRIÇÃO da planilha (se não houver, cai num fallback)
-const descricaoPlanilha = colDescricao !== -1
-  ? String(row[colDescricao] || "").trim()
-  : "";
+        // Descrição (nome da conta)
+        const descricaoPlanilha = colDescricao !== -1 ? String(row[colDescricao] || "").trim() : "";
 
-// garante catálogo de contas (tentamos usar a descrição da planilha)
-let idconta = id;
-let nomeConta = descricaoPlanilha || `Conta ${id}`;
-try {
-  const conta = await db.upsertConta({ id, name: nomeConta });
-  idconta = conta?.idconta ?? id;
-  // se o backend retornar o nome, preferimos ele
-  if (conta?.nome) nomeConta = conta.nome;
-} catch (e2) {
-  console.warn("upsertConta falhou:", e2?.message || e2);
-}
+        // Primeiro calcula os valores (evita ReferenceError)
+        const deb  = parseBRNumber(row[colDeb]);
+        const cred = parseBRNumber(row[colCred]);
+        if (deb === 0 && cred === 0) continue;
 
-// movimentação…
-movimentacoes.push({
-  idconta,
-  mes: selectedMonth,
-  ano: selectedYear,
-  debito: deb,
-  credito: cred,
-  idcentrocusto: idCC,
-  centrocusto_nome: centro?.nome ?? null,
-  centrocusto_codigo: centro?.id ?? null,
-});
+        // Garante catálogo de contas
+        let idconta = id;
+        let nomeConta = descricaoPlanilha || `Conta ${id}`;
+        try {
+          const conta = await db.upsertConta({ id, name: nomeConta });
+          idconta = conta?.idconta ?? id;
+          if (conta?.nome) nomeConta = conta.nome;
+        } catch (e2) {
+          console.warn("upsertConta falhou:", e2?.message || e2);
+        }
 
-// valor para feedback pós-import
-const val = cred - deb;
-newAccounts[idconta] = {
-  id: idconta,
-  name: nomeConta,       // <- usa o nome correto
-  valor: Math.abs(val),
-  sign: val >= 0 ? "+" : "-",
-};
+        // Movimentação
+        movimentacoes.push({
+          idconta,
+          mes: selectedMonth,
+          ano: selectedYear,
+          debito: deb,
+          credito: cred,
+          idcentrocusto: idCC,
+          centrocusto_nome: centro?.nome ?? null,
+          centrocusto_codigo: centro?.id ?? null,
+        });
 
+        // Feedback imediato
+        const val = cred - deb;
+        newAccounts[idconta] = {
+          id: idconta,
+          name: nomeConta,
+          valor: Math.abs(val),
+          sign: val >= 0 ? "+" : "-",
+        };
       }
 
       // 4) grava (INSERE) + empresa do import
@@ -602,7 +598,6 @@ newAccounts[idconta] = {
                           return (
                             <tr key={id} className="report-account-row">
                               <td style={{ paddingLeft: 20 }}>
-                                {/* Exibe SEMPRE o código + nome */}
                                 {id} – {a.name}
                               </td>
                               <td style={{ color: "var(--accent)" }}>{formatValue(recA)}</td>
@@ -657,7 +652,6 @@ newAccounts[idconta] = {
                   {(provided) => (
                     <div ref={provided.innerRef} {...provided.droppableProps} className="column">
                       <h2>{col.title}</h2>
-                      {/* total com sinal correto */}
                       <div className="aggregator-total" style={{ color: signedTotal < 0 ? "var(--danger)" : "var(--accent)" }}>
                         Total: {formatValue(signedTotal)}
                       </div>
@@ -672,14 +666,17 @@ newAccounts[idconta] = {
                               className="card"
                             >
                               <div className="card-header">
-                                {/* Exibe código + nome */}
-                                <span className="description">{accounts[acctId]?.name || `Conta ${acctId}`}</span>
-                                {/* Botão +/- para inverter sinal visual */}
+                                <span className="description">
+                                  {acctId} – {accounts[acctId]?.name || `Conta ${acctId}`}
+                                </span>
                                 <button className="sign-btn" onClick={() => toggleAccountSign(acctId)}>
                                   {accounts[acctId]?.sign === "+" ? "+" : "–"}
                                 </button>
                               </div>
-                              <div className="card-body" style={{ color: accounts[acctId]?.sign === "+" ? "var(--accent)" : "var(--danger)" }}>
+                              <div
+                                className="card-body"
+                                style={{ color: accounts[acctId]?.sign === "+" ? "var(--accent)" : "var(--danger)" }}
+                              >
                                 Resultado: {formatValue(
                                   accounts[acctId]?.sign === "+" ? accounts[acctId].valor : -accounts[acctId].valor
                                 )}
