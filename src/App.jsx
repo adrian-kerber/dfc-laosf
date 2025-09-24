@@ -10,15 +10,17 @@ import { db } from "./lib/database";
 import "./App.css";
 
 /**
- * App principal
- * - adiciona "categories" (categoria = agrupador de agrupadores)
- * - tenta usar db.getCategorias() / db.getCategoriaAgrupadores() / db.saveCategorias()
- *   se backend tiver suporte. Caso contrário, usa localStorage como fallback.
+ * App.jsx - versão integrando persistência de CATEGORIAS no DB (preferencial)
+ * - Usa db.getCategorias() e db.getCategoriaAgrupadores() se existirem
+ * - Usa db.saveCategorias(newCategories) para persistir (se disponível)
+ * - Fallback para localStorage (LS_CATEGORIES) quando backend indisponível
  *
- * Estilo do código: direto, comentado — você pediu que eu comente tudo.
+ * Observações:
+ * - AggregatorConfig deve suportar props: aggregators, categories, onChanged, onSaveCategories, onSaveGroups
+ * - lib/database.js deve exportar os wrappers db.getCategorias/getCategoriaAgrupadores/saveCategorias
  */
 
-/* ===== Constantes e utilitários ===== */
+/* ===== Constantes ===== */
 const COMPANIES = [
   { id: "1", name: "LUIZ ANTONIO ORTOLLAN SALLES" },
   { id: "7", name: "JORGE AUGUSTO SALLES E OUTRO" },
@@ -35,6 +37,21 @@ const LS_COMPANY = "dfc-laosf:company";
 const LS_FILTERS = "dfc-laosf:filters";
 const LS_CATEGORIES = "dfc-laosf:categories";
 
+/* Optionally change default categories here if you want initial seeds */
+const DEFAULT_CATEGORIES = {
+  "granja-dona-clara-i": { id: "granja-dona-clara-i", title: "GRANJA DONA CLARA I", agrupadorIds: [] },
+  "granja-dona-clara-ii": { id: "granja-dona-clara-ii", title: "GRANJA DONA CLARA II", agrupadorIds: [] },
+  "agricultura": { id: "agricultura", title: "AGRICULTURA", agrupadorIds: [] },
+  "apoio": { id: "apoio", title: "APOIO", agrupadorIds: [] },
+  "diretoria": { id: "diretoria", title: "DIRETORIA", agrupadorIds: [] },
+  "apicultura-avicultura-bovino-piscicultura": {
+    id: "apicultura-avicultura-bovino-piscicultura",
+    title: "APICULTURA, AVICULTURA, BOVINOCULTURA E PISCICULTURA",
+    agrupadorIds: []
+  },
+  "uncategorized": { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] }
+};
+
 const MONTHS_PT = [
   "janeiro","fevereiro","março","abril","maio","junho",
   "julho","agosto","setembro","outubro","novembro","dezembro"
@@ -45,41 +62,44 @@ const readSavedFilters = () => {
   catch { return null; }
 };
 
-/* ===== Componente principal ===== */
+/* ===== App ===== */
 export default function App() {
-  /* Sidebar retrátil (default fechada) */
+  /* UI / app state */
   const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  /* Empresa usada no IMPORT (salva junto nas movimentações) */
   const [company, setCompany] = useState(() => localStorage.getItem(LS_COMPANY) || COMPANIES[0].id);
   const [activeView, setActiveView] = useState("reports");
 
-  /* Período do upload */
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
-  /* Filtros globais (relatórios/grupos) */
   const saved = readSavedFilters();
   const [currentMonth, setCurrentMonth] = useState(saved?.month ?? new Date().getMonth() + 1);
   const [currentYear, setCurrentYear] = useState(saved?.year ?? new Date().getFullYear());
   const [currentCostCenter, setCurrentCostCenter] = useState(saved?.costCenter ?? ALL);
-  const [companyFilter, setCompanyFilter] = useState(saved?.companyFilter ?? ALL); // "all" | "1" | "7"
+  const [companyFilter, setCompanyFilter] = useState(saved?.companyFilter ?? ALL);
 
-  /* Catálogo de CC */
   const [costCenters, setCostCenters] = useState([]);
 
-  /* Dados: agrupadores (aggs), contas, categorias */
+  /* Dados principais */
   const [aggregators, setAggregators] = useState({
     unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: [] },
   });
-  const [accounts, setAccounts] = useState({}); // { [id]: { id, name, valor, sign } }
+  const [accounts, setAccounts] = useState({}); // { id: { id, name, valor, sign } }
 
-  /* Categorias (novo): objeto { [id]: { id, title, agrupadorIds: [] } } */
-  const [categories, setCategories] = useState({
-    uncategorized: { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] },
+  /* Categorias: prefer DB, fallback localStorage, fallback DEFAULT_CATEGORIES */
+  const [categories, setCategories] = useState(() => {
+    try {
+      const raw = localStorage.getItem(LS_CATEGORIES);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && Object.keys(parsed).length) return parsed;
+      }
+    } catch (e) {
+      console.warn("Erro lendo LS_CATEGORIES:", e);
+    }
+    return DEFAULT_CATEGORIES;
   });
 
-  /* UI */
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState({});
   const [unit, setUnit] = useState("reais");
@@ -136,48 +156,38 @@ export default function App() {
     return null;
   };
 
-  /* ===== Carregar dados (aplica filtros globais) ===== */
+  /* ===== Load data (with categories from DB when possible) ===== */
   const loadMonthData = useCallback(async () => {
     try {
       setLoading(true);
 
-      // 1) CC (centros de custo)
+      // 1) Centros de custo
       try {
         const ccs = await db.getCentrosCusto?.();
         if (Array.isArray(ccs)) setCostCenters(ccs);
-      } catch (e) { console.warn("getCentrosCusto indisponível:", e?.message || e); }
+      } catch (e) { console.warn("getCentrosCusto error:", e?.message || e); }
 
-      // 2) Contas (catálogo base)
+      // 2) Contas (catalog)
       const contas = await db.getContas();
       const contasMap = {};
-      contas.forEach((c) => {
-        contasMap[c.idconta] = { id: c.idconta, name: c.nome, valor: 0, sign: "+" };
-      });
+      contas.forEach((c) => { contasMap[c.idconta] = { id: c.idconta, name: c.nome, valor: 0, sign: "+" }; });
 
-      // 3) Movimentações filtradas (mês pode ser null; CC null; empresa null)
-      // Normaliza filtros antes de chamar a API
+      // 3) Movimentações (filtros)
       const monthParam = reportFilters.month === ALL ? null : Number(reportFilters.month);
       const yearParam = reportFilters.year == null ? Number(currentYear) : Number(reportFilters.year);
-      const centroParam = (!reportFilters.costCenter || reportFilters.costCenter === ALL) 
-        ? null 
-        : Number(reportFilters.costCenter);
-      const empresaParam = (!reportFilters.companyFilter || reportFilters.companyFilter === ALL)
-        ? null
-        : String(reportFilters.companyFilter);
+      const centroParam = (!reportFilters.costCenter || reportFilters.costCenter === ALL) ? null : Number(reportFilters.costCenter);
+      const empresaParam = (!reportFilters.companyFilter || reportFilters.companyFilter === ALL) ? null : String(reportFilters.companyFilter);
 
-      // Fallback: usamos db.getMovimentacoes (wrapper) - ele deve enviar 'cc' e 'emp'
       const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empresaParam);
 
-      // 4) Atualiza nomes e acumula valores
+      // 4) acumula valores
       Object.values(contasMap).forEach((c) => { c.valor = 0; c.sign = "+"; });
-
       (Array.isArray(movs) ? movs : []).forEach((m) => {
         if (!contasMap[m.idconta]) {
           contasMap[m.idconta] = { id: m.idconta, name: m.nome || m.conta_nome || `Conta ${m.idconta}`, valor: 0, sign: "+" };
         } else if (m.nome || m.conta_nome) {
           contasMap[m.idconta].name = m.nome || m.conta_nome;
         }
-        // somamos: crédito - débito (o delta no nosso modelo)
         const delta = (Number(m.credito) || 0) - (Number(m.debito) || 0);
         const atual = (contasMap[m.idconta].sign === "+" ? 1 : -1) * contasMap[m.idconta].valor;
         const novo = atual + delta;
@@ -185,62 +195,68 @@ export default function App() {
         contasMap[m.idconta].sign = novo >= 0 ? "+" : "-";
       });
 
-      // 5) Agrupadores (globais)
+      // 5) agrupadores
       const grupos = await db.getAgrupadores();
       const gruposMap = { unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: [] } };
-      grupos.forEach((g) => {
-        gruposMap[String(g.idagrupador)] = { id: String(g.idagrupador), title: g.nome, accountIds: [] };
-      });
+      grupos.forEach((g) => { gruposMap[String(g.idagrupador)] = { id: String(g.idagrupador), title: g.nome, accountIds: [] }; });
 
-      // 6) Ligações Conta→Agrupador
+      // 6) ligações conta->agrupador
       const liga = await db.getAgrupadorContas();
       liga.forEach((a) => {
         const gid = String(a.idagrupador);
         if (gruposMap[gid] && contasMap[a.idconta]) gruposMap[gid].accountIds.push(a.idconta);
       });
 
-      // 7) Sem agrupador (preenche o unassigned)
-      const assigned = new Set(
-        Object.values(gruposMap).filter((g) => g.id !== "unassigned").flatMap((g) => g.accountIds || [])
-      );
+      // 7) sem agrupador
+      const assigned = new Set(Object.values(gruposMap).filter((g) => g.id !== "unassigned").flatMap((g) => g.accountIds || []));
       gruposMap.unassigned.accountIds = Object.keys(contasMap).filter((id) => !assigned.has(id));
 
-      /* ===== Categorias (novo) =====
-         - tenta carregar do backend via db.getCategorias() + db.getCategoriaAgrupadores()
-         - fallback: localStorage
-         - garante que todo agrupador esteja em alguma categoria (uncategorized)
-      */
+      /* ===== categorias: tentar carregar do DB (preferencial) ===== */
       let categoriasMap = { uncategorized: { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] } };
       try {
+        // db.getCategorias() -> expected array [{ idcategoria, nome }, ...]
         const dbCats = typeof db.getCategorias === "function" ? await db.getCategorias() : null;
-        const dbCatLinks = typeof db.getCategoriaAgrupadores === "function" ? await db.getCategoriaAgrupadores() : null;
+        const dbLinks = typeof db.getCategoriaAgrupadores === "function" ? await db.getCategoriaAgrupadores() : null;
 
         if (Array.isArray(dbCats) && dbCats.length) {
           categoriasMap = {};
           dbCats.forEach((c) => {
             categoriasMap[String(c.idcategoria)] = { id: String(c.idcategoria), title: c.nome, agrupadorIds: [] };
           });
-          if (Array.isArray(dbCatLinks)) {
-            dbCatLinks.forEach((l) => {
+          if (Array.isArray(dbLinks)) {
+            dbLinks.forEach((l) => {
               const cid = String(l.idcategoria);
               const gid = String(l.idagrupador);
               if (categoriasMap[cid] && gruposMap[gid]) categoriasMap[cid].agrupadorIds.push(gid);
             });
           }
+          // persist in localStorage as cache for UI speed (optional)
+          try { localStorage.setItem(LS_CATEGORIES, JSON.stringify(categoriasMap)); } catch {}
         } else {
+          // fallback: localStorage or default
           const raw = localStorage.getItem(LS_CATEGORIES);
           if (raw) {
             try {
               const parsed = JSON.parse(raw);
               if (parsed && typeof parsed === "object") categoriasMap = parsed;
             } catch {}
+          } else {
+            categoriasMap = DEFAULT_CATEGORIES;
+            try { localStorage.setItem(LS_CATEGORIES, JSON.stringify(categoriasMap)); } catch {}
           }
         }
       } catch (e) {
         console.warn("Erro ao carregar categorias (fallback local):", e?.message || e);
+        // fallback local
+        const raw = localStorage.getItem(LS_CATEGORIES);
+        if (raw) {
+          try { categoriasMap = JSON.parse(raw); } catch {}
+        } else {
+          categoriasMap = DEFAULT_CATEGORIES;
+        }
       }
 
-      // garante que todo agrupador esteja em alguma categoria
+      // garante que todo agrupador esteja em alguma categoria (move não atribuídos para uncategorized)
       const allGroupIds = Object.keys(gruposMap).filter((id) => id !== "unassigned");
       const assignedGroupIds = new Set(Object.values(categoriasMap).flatMap((c) => c.agrupadorIds || []));
       categoriasMap.uncategorized = categoriasMap.uncategorized || { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] };
@@ -248,7 +264,7 @@ export default function App() {
         new Set([...(categoriasMap.uncategorized.agrupadorIds || []), ...allGroupIds.filter((g) => !assignedGroupIds.has(g))])
       );
 
-      // Atualiza estados
+      // atualiza estados
       setAccounts(contasMap);
       setAggregators(gruposMap);
       setCategories(categoriasMap);
@@ -259,26 +275,49 @@ export default function App() {
     }
   }, [currentMonth, currentYear, currentCostCenter, reportFilters.month, companyFilter]);
 
-  /* Carrega ao montar e quando loadMonthData mudar */
+  /* carregar on mount / quando filtros mudarem */
   useEffect(() => { loadMonthData(); }, [loadMonthData]);
 
-  /* Persistência local */
+  /* persist filtros/company */
   useEffect(() => { localStorage.setItem(LS_COMPANY, company); }, [company]);
   useEffect(() => {
-    localStorage.setItem(
-      LS_FILTERS,
-      JSON.stringify({
-        month: reportFilters.month,
-        year: reportFilters.year,
-        costCenter: reportFilters.costCenter,
-        companyFilter,
-      })
-    );
+    localStorage.setItem(LS_FILTERS, JSON.stringify({
+      month: reportFilters.month,
+      year: reportFilters.year,
+      costCenter: reportFilters.costCenter,
+      companyFilter,
+    }));
   }, [reportFilters.month, reportFilters.year, reportFilters.costCenter, companyFilter]);
 
-  /* ===== Funções de manipulação ===== */
+  /* ===== salvar categorias (chamado pelo AggregatorConfig via onSaveCategories) ===== */
+  // converte o mapa local -> payload esperado pelo backend
+  const handleSaveCategories = async (newCats) => {
+    // newCats should be an object: { id: { id, title, agrupadorIds: [] }, ... }
+    try {
+      setLoading(true);
+      // first, update local state & cache
+      setCategories(newCats);
+      try { localStorage.setItem(LS_CATEGORIES, JSON.stringify(newCats)); } catch {}
 
-  // Salvar mapeamento global conta->agrupador
+      // Try saving to DB if function exists
+      if (typeof db.saveCategorias === "function") {
+        await db.saveCategorias(newCats);
+        // after saving on DB, reload to ensure IDs and links are consistent from DB
+        await loadMonthData();
+        alert("Categorias salvas no banco.");
+      } else {
+        // fallback: keep only local storage
+        alert("Categorias salvas localmente (localStorage). Para salvar no banco, implemente db.saveCategorias().");
+      }
+    } catch (e) {
+      console.error("Erro ao salvar categorias:", e);
+      alert("Falha ao salvar categorias: " + (e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* ===== handleSaveGroups (mapeamento contas->agrupador) - seu código original ===== */
   const handleSaveGroups = async () => {
     try {
       const associations = [];
@@ -295,7 +334,6 @@ export default function App() {
 
       await db.saveAgrupadorContas([...associations, ...unassignedItems]);
       alert("Mapeamento de contas salvo (global).");
-      // recarrega pra garantir consistência
       loadMonthData().catch(() => {});
     } catch (e) {
       console.error(e);
@@ -303,7 +341,7 @@ export default function App() {
     }
   };
 
-  // Toggle visual do sinal de uma conta
+  /* ===== demais utilitários e import logic (mantive exatamente igual ao seu) ===== */
   const toggleAccountSign = (id) => {
     setAccounts((prev) => {
       const a = prev[id]; if (!a) return prev;
@@ -311,7 +349,6 @@ export default function App() {
     });
   };
 
-  // DnD: mover contas entre agrupadores
   const onDragEnd = ({ source, destination, draggableId }) => {
     if (!destination) return;
     if (source.droppableId === destination.droppableId && source.index === destination.index) return;
@@ -331,7 +368,6 @@ export default function App() {
     }));
   };
 
-  /* ===== Importação de Excel (mantive seu código) ===== */
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -432,7 +468,7 @@ export default function App() {
       setReportFilters((p) => ({ ...p, month: selectedMonth, year: selectedYear }));
       if (idCC) {
         setCurrentCostCenter(String(idCC));
-        setReportFilters((p) => ({ ...p, costCenter: String(idCC) })); // também persiste no filtro
+        setReportFilters((p) => ({ ...p, costCenter: String(idCC) }));
       }
 
       alert(
@@ -590,20 +626,12 @@ export default function App() {
               <hr className="sidebar-sep" />
               {/* Passamos também categories e onSaveCategories para o config */}
               <AggregatorConfig
-  aggregators={aggregators}
-  categories={categories}
-  onChanged={loadMonthData}
-  onSaveCategories={async (newCats) => {
-    setCategories(newCats);
-    if (typeof db.saveCategorias === "function") {
-      try { await db.saveCategorias(newCats); } catch (e) { console.warn("saveCategorias falhou:", e); }
-    } else {
-      localStorage.setItem("dfc-laosf:categories", JSON.stringify(newCats));
-    }
-    loadMonthData().catch(() => {});
-  }}
-  onSaveGroups={handleSaveGroups}
-/>
+                aggregators={aggregators}
+                categories={categories}
+                onChanged={loadMonthData}
+                onSaveCategories={handleSaveCategories}
+                onSaveGroups={handleSaveGroups}
+              />
 
               <button onClick={handleSaveGroups} className="btn-save">Salvar agrupadores</button>
             </>
