@@ -14,10 +14,7 @@ import "./App.css";
  * - Usa db.getCategorias() e db.getCategoriaAgrupadores() se existirem
  * - Usa db.saveCategorias(newCategories) para persistir (se disponível)
  * - Fallback para localStorage (LS_CATEGORIES) quando backend indisponível
- *
- * Observações:
- * - AggregatorConfig deve suportar props: aggregators, categories, onChanged, onSaveCategories, onSaveGroups
- * - lib/database.js deve exportar os wrappers db.getCategorias/getCategoriaAgrupadores/saveCategorias
+ * - INTEGRADO com AggregatorConfig que já tem interface de categorias
  */
 
 /* ===== Constantes ===== */
@@ -29,6 +26,7 @@ const COMPANIES = [
 const TABS = [
   { id: "reports", label: "Relatórios" },
   { id: "groups", label: "Agrupadores" },
+  { id: "categories", label: "Categorias" },
   { id: "import", label: "Importar" },
 ];
 
@@ -621,10 +619,10 @@ export default function App() {
             </>
           )}
 
-          {activeView === "groups" && (
+          {(activeView === "groups" || activeView === "categories") && (
             <>
               <hr className="sidebar-sep" />
-              {/* Passamos também categories e onSaveCategories para o config */}
+              {/* AggregatorConfig já tem interface completa de categorias integrada */}
               <AggregatorConfig
                 aggregators={aggregators}
                 categories={categories}
@@ -632,8 +630,6 @@ export default function App() {
                 onSaveCategories={handleSaveCategories}
                 onSaveGroups={handleSaveGroups}
               />
-
-              <button onClick={handleSaveGroups} className="btn-save">Salvar agrupadores</button>
             </>
           )}
         </div>
@@ -641,121 +637,119 @@ export default function App() {
 
       {/* Conteúdo principal */}
       {activeView === "reports" && (
-  <div className="report-list-view">
-    <h2 style={{ textAlign: "center", marginBottom: 12 }}>
-      Relatório - {currentYear}
-      {reportFilters.month === ALL
-        ? " - Todos os meses"
-        : ` - ${new Date(currentYear, currentMonth - 1).toLocaleString("pt-BR", { month: "long" })}`}
-      {currentCostCenter === ALL
-        ? " - Todos os Centros"
-        : (() => {
-            const cc = costCenters.find((c) => String(c.idcentrocusto) === String(currentCostCenter));
-            return cc ? ` - CC: ${cc.codigo ? cc.codigo + " - " : ""}${cc.nome}` : "";
-          })()}
-      {" - Empresa: "}
-      {companyFilter === ALL ? "Todas" : (() => {
-        const c = COMPANIES.find((x) => x.id === companyFilter);
-        return c ? `${c.id} - ${c.name}` : companyFilter;
-      })()}
-    </h2>
+        <div className="report-list-view">
+          <h2 style={{ textAlign: "center", marginBottom: 12 }}>
+            Relatório - {currentYear}
+            {reportFilters.month === ALL
+              ? " - Todos os meses"
+              : ` - ${new Date(currentYear, currentMonth - 1).toLocaleString("pt-BR", { month: "long" })}`}
+            {currentCostCenter === ALL
+              ? " - Todos os Centros"
+              : (() => {
+                  const cc = costCenters.find((c) => String(c.idcentrocusto) === String(currentCostCenter));
+                  return cc ? ` - CC: ${cc.codigo ? cc.codigo + " - " : ""}${cc.nome}` : "";
+                })()}
+            {" - Empresa: "}
+            {companyFilter === ALL ? "Todas" : (() => {
+              const c = COMPANIES.find((x) => x.id === companyFilter);
+              return c ? `${c.id} - ${c.name}` : companyFilter;
+            })()}
+          </h2>
 
-    <div className="categories-grid">
-      {(() => {
-        // coleta categorias (mantém ordem natural; se quiser ordem customizada, defina um array)
-        const cats = Object.values(categories || {});
-        // calcula valores por categoria
-        return cats.map((cat) => {
-          const catAggIds = (cat.agrupadorIds || []).filter((aid) => aggregators[aid]);
+          <div className="categories-grid">
+            {(() => {
+              // coleta categorias (mantém ordem natural; se quiser ordem customizada, defina um array)
+              const cats = Object.values(categories || {});
+              // calcula valores por categoria
+              return cats.map((cat) => {
+                const catAggIds = (cat.agrupadorIds || []).filter((aid) => aggregators[aid]);
 
-          let catRec = 0;
-          let catCustos = 0;
+                let catRec = 0;
+                let catCustos = 0;
 
-          catAggIds.forEach((aggId) => {
-            const col = aggregators[aggId];
-            if (!col) return;
-            const ids = col.id === "unassigned"
-              ? Object.keys(accounts).filter((id) =>
-                  Object.values(aggregators).filter((a) => a.id !== "unassigned").every((a) => !(a.accountIds || []).includes(id))
-                )
-              : (col.accountIds || []).filter((id) => accounts[id]);
+                catAggIds.forEach((aggId) => {
+                  const col = aggregators[aggId];
+                  if (!col) return;
+                  const ids = col.id === "unassigned"
+                    ? Object.keys(accounts).filter((id) =>
+                        Object.values(aggregators).filter((a) => a.id !== "unassigned").every((a) => !(a.accountIds || []).includes(id))
+                      )
+                    : (col.accountIds || []).filter((id) => accounts[id]);
 
-            ids.forEach((id) => {
-              const a = accounts[id];
-              if (!a) return;
-              if (a.sign === "+") catRec += Number(a.valor || 0);
-              else catCustos += Number(a.valor || 0);
-            });
-          });
+                  ids.forEach((id) => {
+                    const a = accounts[id];
+                    if (!a) return;
+                    if (a.sign === "+") catRec += Number(a.valor || 0);
+                    else catCustos += Number(a.valor || 0);
+                  });
+                });
 
-          const saldo = catRec - catCustos;
+                const saldo = catRec - catCustos;
 
-          return (
-            <div className="category-card" key={`cat-${cat.id}`}>
-              <div className="category-header">{cat.title}</div>
+                return (
+                  <div className="category-card" key={`cat-${cat.id}`}>
+                    <div className="category-header">{cat.title}</div>
 
-              <div className="category-body">
-                <div className="row">
-                  <div className="label">RECEITA</div>
-                  <div className="value receita">{formatValue(catRec)}</div>
-                </div>
+                    <div className="category-body">
+                      <div className="row">
+                        <div className="label">RECEITA</div>
+                        <div className="value receita">{formatValue(catRec)}</div>
+                      </div>
 
-                <div className="row">
-                  <div className="label">CUSTOS</div>
-                  <div className="value custos">{formatValue(-catCustos)}</div>
-                </div>
+                      <div className="row">
+                        <div className="label">CUSTOS</div>
+                        <div className="value custos">{formatValue(-catCustos)}</div>
+                      </div>
 
-                <div className="row saldo-row">
-                  <div className="label">SALDO</div>
-                  <div className={`value saldo ${saldo < 0 ? "neg" : "pos"}`}>{formatValue(saldo)}</div>
-                </div>
-              </div>
-            </div>
-          );
-        });
-      })()}
-    </div>
-
-    {/* Totalizador geral (opcional abaixo dos cards) */}
-    <div style={{ marginTop: 18 }}>
-      <div style={{ fontWeight: 700, textAlign: "right", color: "var(--accent)" }}>
-        {/* Calcula totais */ }
-        {(() => {
-          const cats = Object.values(categories || {});
-          let totalRec = 0, totalCustos = 0;
-          cats.forEach((cat) => {
-            const catAggIds = (cat.agrupadorIds || []).filter((aid) => aggregators[aid]);
-            catAggIds.forEach((aggId) => {
-              const col = aggregators[aggId];
-              if (!col) return;
-              const ids = col.id === "unassigned"
-                ? Object.keys(accounts).filter((id) =>
-                    Object.values(aggregators).filter((a) => a.id !== "unassigned").every((a) => !(a.accountIds || []).includes(id))
-                  )
-                : (col.accountIds || []).filter((id) => accounts[id]);
-              ids.forEach((id) => {
-                const a = accounts[id];
-                if (!a) return;
-                if (a.sign === "+") totalRec += Number(a.valor || 0);
-                else totalCustos += Number(a.valor || 0);
+                      <div className="row saldo-row">
+                        <div className="label">SALDO</div>
+                        <div className={`value saldo ${saldo < 0 ? "neg" : "pos"}`}>{formatValue(saldo)}</div>
+                      </div>
+                    </div>
+                  </div>
+                );
               });
-            });
-          });
-          const totalSaldo = totalRec - totalCustos;
-          return (
-            <div>
-              Total Receita: {formatValue(totalRec)} &nbsp;&nbsp;|&nbsp;&nbsp;
-              Total Custos: {formatValue(-totalCustos)} &nbsp;&nbsp;|&nbsp;&nbsp;
-              Saldo: <span style={{ color: totalSaldo < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(totalSaldo)}</span>
+            })()}
+          </div>
+
+          {/* Totalizador geral (opcional abaixo dos cards) */}
+          <div style={{ marginTop: 18 }}>
+            <div style={{ fontWeight: 700, textAlign: "right", color: "var(--accent)" }}>
+              {/* Calcula totais */ }
+              {(() => {
+                const cats = Object.values(categories || {});
+                let totalRec = 0, totalCustos = 0;
+                cats.forEach((cat) => {
+                  const catAggIds = (cat.agrupadorIds || []).filter((aid) => aggregators[aid]);
+                  catAggIds.forEach((aggId) => {
+                    const col = aggregators[aggId];
+                    if (!col) return;
+                    const ids = col.id === "unassigned"
+                      ? Object.keys(accounts).filter((id) =>
+                          Object.values(aggregators).filter((a) => a.id !== "unassigned").every((a) => !(a.accountIds || []).includes(id))
+                        )
+                      : (col.accountIds || []).filter((id) => accounts[id]);
+                    ids.forEach((id) => {
+                      const a = accounts[id];
+                      if (!a) return;
+                      if (a.sign === "+") totalRec += Number(a.valor || 0);
+                      else totalCustos += Number(a.valor || 0);
+                    });
+                  });
+                });
+                const totalSaldo = totalRec - totalCustos;
+                return (
+                  <div>
+                    Total Receita: {formatValue(totalRec)} &nbsp;&nbsp;|&nbsp;&nbsp;
+                    Total Custos: {formatValue(-totalCustos)} &nbsp;&nbsp;|&nbsp;&nbsp;
+                    Saldo: <span style={{ color: totalSaldo < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(totalSaldo)}</span>
+                  </div>
+                );
+              })()}
             </div>
-          );
-        })()}
-      </div>
-    </div>
-  </div>
-)}
-
-
+          </div>
+        </div>
+      )}
 
       {/* Agrupadores (drag & drop) */}
       {activeView === "groups" && (
@@ -823,9 +817,24 @@ export default function App() {
         </DragDropContext>
       )}
 
+      {/* Interface de Categorias */}
+      {activeView === "categories" && (
+        <div className="report-list-view">
+          <h2>Gerenciamento de Categorias</h2>
+          <p style={{ marginBottom: 16, color: "#666" }}>
+            Use esta seção para criar categorias e atribuir agrupadores a elas. 
+            As categorias organizam seus agrupadores em grupos maiores para melhor análise nos relatórios.
+          </p>
+          {loading && <p>Carregando...</p>}
+        </div>
+      )}
+
       {activeView === "import" && (
         <div className="report-list-view">
           <h2>Importar balancete</h2>
+          <p style={{ marginBottom: 16, color: "#666" }}>
+            Selecione o período de importação na barra lateral e faça upload do arquivo Excel (.xls ou .xlsx).
+          </p>
           {loading && <p>Processando...</p>}
         </div>
       )}
