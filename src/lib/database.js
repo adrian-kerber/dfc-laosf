@@ -31,8 +31,8 @@ export const db = {
     const qs = new URLSearchParams();
     if (ano != null) qs.set('ano', ano);
     if (mes != null) qs.set('mes', mes);
-    if (cc  != null) qs.set('centro', cc);     // <- API espera 'centro'
-    if (empresa != null) qs.set('empresa', empresa); // <- "1" | "7" | "all"
+    if (cc  != null) qs.set('cc', cc);     // <- API espera 'centro'
+    if (empresa != null) qs.set('emp', empresa); // <- "1" | "7" | "all"
     const url = qs.toString() ? `/api/movimentacoes?${qs}` : '/api/movimentacoes';
     return fetch(url).then(j);
   },
