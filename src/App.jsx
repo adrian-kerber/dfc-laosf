@@ -466,11 +466,24 @@ const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empre
           <label className="label" style={{ marginTop: 8 }}>Centro de Custo</label>
           <select
             value={String(reportFilters.costCenter)}
-            onChange={(e) => {
-              const cc = e.target.value === "all" ? ALL : e.target.value;
-              setReportFilters((p) => ({ ...p, costCenter: cc }));
-              setCurrentCostCenter(cc);
-            }}
+            // Substitua o onChange do select de Centro de Custo por este trecho:
+onChange={(e) => {
+  // Normaliza o valor vindo do select: 'all' vira ALL, senão mantém string (id)
+  const cc = e.target.value === "all" ? ALL : e.target.value;
+
+  // Atualiza tanto o reportFilters (UI) quanto o estado currentCostCenter
+  setReportFilters((p) => ({ ...p, costCenter: cc }));
+  setCurrentCostCenter(cc);
+
+  // Chama imediatamente o loader para recarregar o relatório com o novo CC.
+  // loadMonthData é um função async criada com useCallback — chamar direto é ok.
+  // (não esperamos o setState terminar; passamos o filtro já normalizado via estado usado dentro da função)
+  loadMonthData().catch((err) => {
+    console.error("Erro ao recarregar dados após mudança de CC:", err);
+    alert("Falha ao atualizar relatório. Veja o console para detalhes.");
+  });
+}}
+
           >
             <option value="all">Todos os Centros</option>
             {costCenters.map((cc) => (
