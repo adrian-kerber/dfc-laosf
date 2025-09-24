@@ -51,11 +51,21 @@ export default async function handler(req) {
       const cc      = url.searchParams.get('cc');            // idcentrocusto ou null
       const empresa = url.searchParams.get('emp');           // "1"/"7" ou null
 
-      const where = [];
-      if (ano != null)     where.push(sql`m.ano = ${toInt(ano)}`);
-      if (mes != null)     where.push(sql`m.mes = ${toInt(mes)}`);
-      if (cc != null && cc !== 'all') where.push(sql`m.idcentrocusto = ${toInt(cc)}`);
-      if (empresa != null && empresa !== 'all') where.push(sql`m.empresa = ${empresa}`);
+      // Normalize and only add SQL fragments when converted values are valid.
+// Convert to ints once
+const anoInt = toInt(ano);
+const mesInt = toInt(mes);
+const ccInt  = toInt(cc);
+
+const where = [];
+if (anoInt !== null) where.push(sql`m.ano = ${anoInt}`);
+if (mesInt !== null) where.push(sql`m.mes = ${mesInt}`);
+// ccInt can be null -> don't add condition; if client wants "all", it should send null
+if (ccInt !== null) where.push(sql`m.idcentrocusto = ${ccInt}`);
+
+// Empresa is a string identifier ("1" or "7"). Add only if present and not 'all'
+if (empresa && empresa !== 'all') where.push(sql`m.empresa = ${String(empresa)}`);
+
 
       const cond = where.length
         ? sql`WHERE ${where.reduce((acc, w, i) => i ? sql`${acc} AND ${w}` : w)}`

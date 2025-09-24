@@ -145,12 +145,27 @@ export default function App() {
       });
 
       // 3) Movimentações filtradas (mês pode ser null; CC null; empresa null)
-      const monthParam = reportFilters.month === ALL ? null : Number(currentMonth);
-      const yearParam = Number(currentYear);
-      const centroParam = currentCostCenter === ALL ? null : currentCostCenter;
-      const empresaParam = companyFilter === ALL ? null : companyFilter;
+    // --- Normaliza filtros antes de chamar a API ---
+// Always use the reportFilters (UI) as source of truth and coerce types.
+// month -> null | number
+const monthParam = reportFilters.month === ALL ? null : Number(reportFilters.month);
+// year -> null | number (fall back to currentYear if missing)
+const yearParam = reportFilters.year == null ? Number(currentYear) : Number(reportFilters.year);
+// centro -> null | integer (idcentrocusto)
+const centroParam = (!reportFilters.costCenter || reportFilters.costCenter === ALL) 
+  ? null 
+  : Number(reportFilters.costCenter);
+// empresa -> null | string ("1" | "7")
+const empresaParam = (!reportFilters.companyFilter || reportFilters.companyFilter === ALL)
+  ? null
+  : String(reportFilters.companyFilter);
 
-      const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empresaParam);
+// DEBUG: veja o que está sendo enviado
+console.debug("loadMonthData: params", { monthParam, yearParam, centroParam, empresaParam });
+
+// Assumindo db.getMovimentacoes que monta query string corretamente
+const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empresaParam);
+
 
       // 4) Atualiza nomes e acumula valores
       Object.values(contasMap).forEach((c) => { c.valor = 0; c.sign = "+"; });
