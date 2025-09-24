@@ -590,22 +590,21 @@ export default function App() {
               <hr className="sidebar-sep" />
               {/* Passamos também categories e onSaveCategories para o config */}
               <AggregatorConfig
-                aggregators={aggregators}
-                categories={categories}
-                onChanged={loadMonthData}
-                onSaveCategories={async (newCats) => {
-                  // handler para salvar categorias (backend se disponível, senão localStorage)
-                  setCategories(newCats);
-                  if (typeof db.saveCategorias === "function") {
-                    try { await db.saveCategorias(newCats); } catch (e) { console.warn("saveCategorias falhou:", e); }
-                  } else {
-                    localStorage.setItem(LS_CATEGORIES, JSON.stringify(newCats));
-                  }
-                  // recarrega view
-                  loadMonthData().catch(() => {});
-                }}
-                onSaveGroups={handleSaveGroups}
-              />
+  aggregators={aggregators}
+  categories={categories}
+  onChanged={loadMonthData}
+  onSaveCategories={async (newCats) => {
+    setCategories(newCats);
+    if (typeof db.saveCategorias === "function") {
+      try { await db.saveCategorias(newCats); } catch (e) { console.warn("saveCategorias falhou:", e); }
+    } else {
+      localStorage.setItem("dfc-laosf:categories", JSON.stringify(newCats));
+    }
+    loadMonthData().catch(() => {});
+  }}
+  onSaveGroups={handleSaveGroups}
+/>
+
               <button onClick={handleSaveGroups} className="btn-save">Salvar agrupadores</button>
             </>
           )}
