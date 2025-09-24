@@ -77,7 +77,7 @@ if (empresa && empresa !== 'all') where.push(sql`m.empresa = ${String(empresa)}`
           COALESCE(m.conta_nome, c.nome) AS nome,  -- preferimos o nome do Excel daquela linha
           c.idconta AS codigo
         FROM movimentacoes m
-        JOIN contas c ON c.idconta = m.idconta
+        LEFT JOIN contas c ON c.idconta = m.idconta
         ${cond}
         ORDER BY c.idconta, m.ano, m.mes, m.idmov
       `;
