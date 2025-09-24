@@ -613,132 +613,96 @@ export default function App() {
 
       {/* Conteúdo principal */}
       {activeView === "reports" && (
-        <div className="report-list-view">
-          <h2>
-            Relatório - {currentYear}
-            {reportFilters.month === ALL
-              ? " - Todos os meses"
-              : ` - ${new Date(currentYear, currentMonth - 1).toLocaleString("pt-BR", { month: "long" })}`}
-            {currentCostCenter === ALL
-              ? " - Todos os Centros"
-              : (() => {
-                  const cc = costCenters.find((c) => String(c.idcentrocusto) === String(currentCostCenter));
-                  return cc ? ` - CC: ${cc.codigo ? cc.codigo + " - " : ""}${cc.nome}` : "";
-                })()}
-            {" - Empresa: "}
-            {companyFilter === ALL ? "Todas" : (() => {
-              const c = COMPANIES.find((x) => x.id === companyFilter);
-              return c ? `${c.id} - ${c.name}` : companyFilter;
-            })()}
-          </h2>
+  <div className="report-list-view">
+    <h2>
+      Relatório - {currentYear}
+      {reportFilters.month === ALL
+        ? " - Todos os meses"
+        : ` - ${new Date(currentYear, currentMonth - 1).toLocaleString("pt-BR", { month: "long" })}`}
+      {currentCostCenter === ALL
+        ? " - Todos os Centros"
+        : (() => {
+            const cc = costCenters.find((c) => String(c.idcentrocusto) === String(currentCostCenter));
+            return cc ? ` - CC: ${cc.codigo ? cc.codigo + " - " : ""}${cc.nome}` : "";
+          })()}
+      {" - Empresa: "}
+      {companyFilter === ALL ? "Todas" : (() => {
+        const c = COMPANIES.find((x) => x.id === companyFilter);
+        return c ? `${c.id} - ${c.name}` : companyFilter;
+      })()}
+    </h2>
 
-          <table className="report-table">
-            <thead>
-              <tr>
-                <th>Agrupador</th>
-                <th>Receita</th>
-                <th>Despesas</th>
-                <th>Resultado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {/* Render por CATEGORIA -> AGRUPADORES -> CONTAS */}
-              {(() => {
-                const cats = Object.values(categories);
-                let totalRec = 0, totalDesp = 0;
+    <table className="report-table">
+      <thead>
+        <tr>
+          <th style={{ textAlign: "left" }}>CATEGORIA</th>
+          <th>RECEITA</th>
+          <th>CUSTOS</th>
+          <th>SALDO</th>
+        </tr>
+      </thead>
+      <tbody>
+        {(() => {
+          // Lista de categorias ordenada
+          const cats = Object.values(categories || {});
+          // Totais gerais
+          let totalRec = 0;
+          let totalCustos = 0;
 
-                const catSections = cats.map((cat) => {
-                  const catAggIds = (cat.agrupadorIds || []).filter((aid) => aggregators[aid]);
+          const rows = cats.map((cat) => {
+            // ids de agrupadores que pertencem à categoria
+            const catAggIds = (cat.agrupadorIds || []).filter((aid) => aggregators[aid]);
 
-                  const rows = catAggIds.map((aggId) => {
-                    const col = aggregators[aggId];
-                    const ids = col.id === "unassigned"
-                      ? Object.keys(accounts).filter((id) =>
-                          Object.values(aggregators).filter((a) => a.id !== "unassigned").every((a) => !(a.accountIds || []).includes(id))
-                        )
-                      : (col.accountIds || []).filter((id) => accounts[id]);
+            // Para cada agrupador, pega as contas válidas e soma
+            let catRec = 0;
+            let catCustos = 0;
 
-                    const rec = ids.reduce((s, id) => s + (accounts[id]?.sign === "+" ? accounts[id].valor : 0), 0);
-                    const desp = ids.reduce((s, id) => s + (accounts[id]?.sign === "-" ? accounts[id].valor : 0), 0);
-                    const res = rec - desp;
-                    totalRec += rec; totalDesp += desp;
+            catAggIds.forEach((aggId) => {
+              const col = aggregators[aggId];
+              if (!col) return;
+              const ids = col.id === "unassigned"
+                ? Object.keys(accounts).filter((id) =>
+                    Object.values(aggregators).filter((a) => a.id !== "unassigned").every((a) => !(a.accountIds || []).includes(id))
+                  )
+                : (col.accountIds || []).filter((id) => accounts[id]);
 
-                    return { aggId, title: col.title, ids, rec, desp, res };
-                  });
+              ids.forEach((id) => {
+                const a = accounts[id];
+                if (!a) return;
+                if (a.sign === "+") catRec += Number(a.valor || 0);
+                else catCustos += Number(a.valor || 0);
+              });
+            });
 
-                  const catRec = rows.reduce((s, r) => s + r.rec, 0);
-                  const catDesp = rows.reduce((s, r) => s + r.desp, 0);
-                  const catRes = catRec - catDesp;
+            totalRec += catRec;
+            totalCustos += catCustos;
+            const saldo = catRec - catCustos;
+            return { id: cat.id, title: cat.title, catRec, catCustos, saldo };
+          });
 
-                  return { cat, rows, catRec, catDesp, catRes };
-                });
+          return rows.map((r) => (
+            <tr key={`cat-${r.id}`} className="category-row">
+              <td style={{ textAlign: "left", paddingLeft: 12 }}>{r.title}</td>
+              <td style={{ color: "var(--accent)" }}>{formatValue(r.catRec)}</td>
+              <td style={{ color: "var(--danger)" }}>{formatValue(-r.catCustos)}</td>
+              <td style={{ color: r.saldo < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(r.saldo)}</td>
+            </tr>
+          )).concat([(
+            <tr key="totalizador" className="report-total-row" style={{ fontWeight: 700 }}>
+              <td>Totalizador</td>
+              <td style={{ color: "var(--accent)" }}>{formatValue(totalRec)}</td>
+              <td style={{ color: "var(--danger)" }}>{formatValue(-totalCustos)}</td>
+              <td style={{ color: (totalRec - totalCustos) < 0 ? "var(--danger)" : "var(--accent)" }}>
+                {formatValue(totalRec - totalCustos)}
+              </td>
+            </tr>
+          )]);
+        })()}
+      </tbody>
+    </table>
+  </div>
+)}
 
-                return catSections.flatMap(({ cat, rows, catRec, catDesp, catRes }) => {
-                  if (!rows.length) return []; // opcional: pular categorias sem agrupadores
-                  return [
-                    <tr key={`cat-${cat.id}`} className="category-header-row" style={{ background: "#e9f5ea", fontWeight: 700 }}>
-                      <td colSpan={4}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span>{cat.title}</span>
-                          <span>
-                            <strong>R$ {Number(catRes || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
-                            &nbsp;&nbsp;
-                            <small style={{ color: "#4CAF50" }}>Receita: {formatValue(catRec)}</small>
-                            &nbsp;&nbsp;
-                            <small style={{ color: "#D32F2F" }}>Custos: {formatValue(-catDesp)}</small>
-                          </span>
-                        </div>
-                      </td>
-                    </tr>,
-
-                    ...rows.map((r) => (
-                      <React.Fragment key={`agg-${r.aggId}`}>
-                        <tr
-                          className="report-header-row"
-                          onClick={() => setExpanded((p) => ({ ...p, [r.aggId]: !p[r.aggId] }))}
-                          style={{ cursor: "pointer" }}
-                        >
-                          <td style={{ paddingLeft: 12 }}>{r.title}</td>
-                          <td style={{ color: "var(--accent)" }}>{formatValue(r.rec)}</td>
-                          <td style={{ color: "var(--danger)" }}>{formatValue(-r.desp)}</td>
-                          <td style={{ color: r.res < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(r.res)}</td>
-                        </tr>
-
-                        {expanded[r.aggId] && r.ids.map((id) => {
-                          const a = accounts[id];
-                          if (!a) return null;
-                          const recA = a.sign === "+" ? a.valor : 0;
-                          const despA = a.sign === "-" ? a.valor : 0;
-                          const resA = recA - despA;
-                          return (
-                            <tr key={`acct-${id}`} className="report-account-row">
-                              <td style={{ paddingLeft: 28 }}>{id} – {a.name}</td>
-                              <td style={{ color: "var(--accent)" }}>{formatValue(recA)}</td>
-                              <td style={{ color: "var(--danger)" }}>{formatValue(-despA)}</td>
-                              <td style={{ color: resA < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(resA)}</td>
-                            </tr>
-                          );
-                        })}
-                      </React.Fragment>
-                    ))
-                  ];
-                })
-                .concat([(() => {
-                  const totRes = totalRec - totalDesp;
-                  return (
-                    <tr key="totalizador" className="report-total-row" style={{ fontWeight: 600 }}>
-                      <td>Totalizador</td>
-                      <td style={{ color: "var(--accent)" }}>{formatValue(totalRec)}</td>
-                      <td style={{ color: "var(--danger)" }}>{formatValue(-totalDesp)}</td>
-                      <td style={{ color: totRes < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(totRes)}</td>
-                    </tr>
-                  );
-                })()]);
-              })()}
-            </tbody>
-          </table>
-        </div>
-      )}
 
       {/* Agrupadores (drag & drop) */}
       {activeView === "groups" && (
