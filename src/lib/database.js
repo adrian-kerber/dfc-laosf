@@ -34,9 +34,6 @@ export const db = {
     if (cc  != null) qs.set('centro', cc);     // <- API espera 'centro'
     if (empresa != null) qs.set('empresa', empresa); // <- "1" | "7" | "all"
     const url = qs.toString() ? `/api/movimentacoes?${qs}` : '/api/movimentacoes';
-    // DEBUG - remover depois de testar
-console.log('movimentacoes GET params:', { mes, ano, cc, empresa, anoInt, mesInt, ccInt });
-
     return fetch(url).then(j);
   },
 
