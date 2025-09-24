@@ -41,36 +41,45 @@ export default async function handler(req) {
         return Response.json({ error: "payload inválido" }, { status: 400 });
       }
 
-      // Simples approach: truncate and re-insert (só se quiser persistência full)
-      // Para segurança usamos transação
-      await sql.begin(async (tx) => {
-        // remover links e categorias existentes (custo aceitável para uso administrativo)
-        await tx`DELETE FROM categoria_agrupadores`;
-        await tx`DELETE FROM categorias`;
+      // Simples approach: remove tudo e re-inserir.
+      // NÃO usamos sql.begin (não disponível no client); executamos de forma sequencial.
+      // Se quiser transação de verdade, eu escrevo com driver que suporte begin/commit.
+      await sql`DELETE FROM categoria_agrupadores`;
+      await sql`DELETE FROM categorias`;
 
-        // inserir categorias (mantendo a ordem das keys)
-        for (const key of Object.keys(inputCats)) {
-          const c = inputCats[key];
-          // se a categoria vier com id que é numeric, respeitamos, mas preferimos inserir novo
-          const inserted = await tx`
-            INSERT INTO categorias (nome) VALUES (${c.title})
-            RETURNING idcategoria
+      // Inserir categorias em ordem das chaves do objeto (mantém ordem enviada)
+      for (const key of Object.keys(inputCats)) {
+        const c = inputCats[key];
+        if (!c || !c.title) continue;
+
+        // Insere categoria e pega novo id
+        const inserted = await sql`
+          INSERT INTO categorias (nome) VALUES (${c.title})
+          RETURNING idcategoria
+        `;
+
+        const newId = inserted?.[0]?.idcategoria;
+        if (!newId) continue;
+
+        // Insere links (usar for..of para garantir await)
+        const ids = Array.isArray(c.agrupadorIds) ? c.agrupadorIds : [];
+        for (const aggIdRaw of ids) {
+          if (aggIdRaw == null || aggIdRaw === "") continue;
+          const aggId = Number(String(aggIdRaw).trim());
+          if (!Number.isFinite(aggId)) continue;
+          await sql`
+            INSERT INTO categoria_agrupadores (idcategoria, idagrupador)
+            VALUES (${newId}, ${aggId})
           `;
-          const newId = inserted[0].idcategoria;
-          // inserir links
-          (c.agrupadorIds || []).forEach(async (aggId) => {
-            if (!aggId) return;
-            await tx`INSERT INTO categoria_agrupadores (idcategoria, idagrupador) VALUES (${newId}, ${Number(aggId)})`;
-          });
         }
-      });
+      }
 
       return Response.json({ ok: true }, { status: 200 });
     }
 
     return new Response("Method Not Allowed", { status: 405 });
   } catch (e) {
-    console.error(e);
+    console.error("Erro em /api/categorias:", e);
     return Response.json({ error: e.message || String(e) }, { status: 500 });
   }
 }
