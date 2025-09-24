@@ -209,3 +209,70 @@ h2 { font-size: 1.1rem; font-weight: 500; color: var(--text-secondary); }
   .container { grid-template-columns: 1fr !important; }
   .report-list-view, .grid { grid-column: 1 !important; }
 }
+/* ===== Category cards layout ===== */
+.categories-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+/* Card */
+.category-card {
+  background: rgba(255,255,255,0.02);
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.03);
+}
+
+/* Header ribbon (light green background as in ref) */
+.category-header {
+  background: #dff3dc; /* light green ribbon */
+  color: #1f5b2a;
+  font-weight: 700;
+  padding: 6px 12px;
+  text-align: center;
+  letter-spacing: 0.4px;
+}
+
+/* Body */
+.category-body {
+  padding: 10px 12px 14px 12px;
+}
+
+/* Rows */
+.category-card .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+}
+
+.category-card .label {
+  font-size: 12px;
+  color: #333;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.category-card .value {
+  font-weight: 700;
+  min-width: 120px;
+  text-align: right;
+}
+
+/* colors */
+.category-card .value.receita { color: #137f3d; } /* green */
+.category-card .value.custos { color: #c62828; } /* red */
+.category-card .value.saldo.pos { color: #137f3d; }
+.category-card .value.saldo.neg { color: #c62828; }
+
+/* destaque do SALDO (um pouco maior) */
+.category-card .saldo-row .value { font-size: 16px; }
+
+/* responsividade */
+@media (max-width: 640px) {
+  .categories-grid { grid-template-columns: 1fr; }
+  .category-card .value { min-width: 100px; font-size: 14px; }
+}

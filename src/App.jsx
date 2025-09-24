@@ -614,7 +614,7 @@ export default function App() {
       {/* Conteúdo principal */}
       {activeView === "reports" && (
   <div className="report-list-view">
-    <h2>
+    <h2 style={{ textAlign: "center", marginBottom: 12 }}>
       Relatório - {currentYear}
       {reportFilters.month === ALL
         ? " - Todos os meses"
@@ -632,31 +632,71 @@ export default function App() {
       })()}
     </h2>
 
-    <table className="report-table">
-      <thead>
-        <tr>
-          <th style={{ textAlign: "left" }}>CATEGORIA</th>
-          <th>RECEITA</th>
-          <th>CUSTOS</th>
-          <th>SALDO</th>
-        </tr>
-      </thead>
-      <tbody>
+    <div className="categories-grid">
+      {(() => {
+        // coleta categorias (mantém ordem natural; se quiser ordem customizada, defina um array)
+        const cats = Object.values(categories || {});
+        // calcula valores por categoria
+        return cats.map((cat) => {
+          const catAggIds = (cat.agrupadorIds || []).filter((aid) => aggregators[aid]);
+
+          let catRec = 0;
+          let catCustos = 0;
+
+          catAggIds.forEach((aggId) => {
+            const col = aggregators[aggId];
+            if (!col) return;
+            const ids = col.id === "unassigned"
+              ? Object.keys(accounts).filter((id) =>
+                  Object.values(aggregators).filter((a) => a.id !== "unassigned").every((a) => !(a.accountIds || []).includes(id))
+                )
+              : (col.accountIds || []).filter((id) => accounts[id]);
+
+            ids.forEach((id) => {
+              const a = accounts[id];
+              if (!a) return;
+              if (a.sign === "+") catRec += Number(a.valor || 0);
+              else catCustos += Number(a.valor || 0);
+            });
+          });
+
+          const saldo = catRec - catCustos;
+
+          return (
+            <div className="category-card" key={`cat-${cat.id}`}>
+              <div className="category-header">{cat.title}</div>
+
+              <div className="category-body">
+                <div className="row">
+                  <div className="label">RECEITA</div>
+                  <div className="value receita">{formatValue(catRec)}</div>
+                </div>
+
+                <div className="row">
+                  <div className="label">CUSTOS</div>
+                  <div className="value custos">{formatValue(-catCustos)}</div>
+                </div>
+
+                <div className="row saldo-row">
+                  <div className="label">SALDO</div>
+                  <div className={`value saldo ${saldo < 0 ? "neg" : "pos"}`}>{formatValue(saldo)}</div>
+                </div>
+              </div>
+            </div>
+          );
+        });
+      })()}
+    </div>
+
+    {/* Totalizador geral (opcional abaixo dos cards) */}
+    <div style={{ marginTop: 18 }}>
+      <div style={{ fontWeight: 700, textAlign: "right", color: "var(--accent)" }}>
+        {/* Calcula totais */ }
         {(() => {
-          // Lista de categorias ordenada
           const cats = Object.values(categories || {});
-          // Totais gerais
-          let totalRec = 0;
-          let totalCustos = 0;
-
-          const rows = cats.map((cat) => {
-            // ids de agrupadores que pertencem à categoria
+          let totalRec = 0, totalCustos = 0;
+          cats.forEach((cat) => {
             const catAggIds = (cat.agrupadorIds || []).filter((aid) => aggregators[aid]);
-
-            // Para cada agrupador, pega as contas válidas e soma
-            let catRec = 0;
-            let catCustos = 0;
-
             catAggIds.forEach((aggId) => {
               const col = aggregators[aggId];
               if (!col) return;
@@ -665,43 +705,28 @@ export default function App() {
                     Object.values(aggregators).filter((a) => a.id !== "unassigned").every((a) => !(a.accountIds || []).includes(id))
                   )
                 : (col.accountIds || []).filter((id) => accounts[id]);
-
               ids.forEach((id) => {
                 const a = accounts[id];
                 if (!a) return;
-                if (a.sign === "+") catRec += Number(a.valor || 0);
-                else catCustos += Number(a.valor || 0);
+                if (a.sign === "+") totalRec += Number(a.valor || 0);
+                else totalCustos += Number(a.valor || 0);
               });
             });
-
-            totalRec += catRec;
-            totalCustos += catCustos;
-            const saldo = catRec - catCustos;
-            return { id: cat.id, title: cat.title, catRec, catCustos, saldo };
           });
-
-          return rows.map((r) => (
-            <tr key={`cat-${r.id}`} className="category-row">
-              <td style={{ textAlign: "left", paddingLeft: 12 }}>{r.title}</td>
-              <td style={{ color: "var(--accent)" }}>{formatValue(r.catRec)}</td>
-              <td style={{ color: "var(--danger)" }}>{formatValue(-r.catCustos)}</td>
-              <td style={{ color: r.saldo < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(r.saldo)}</td>
-            </tr>
-          )).concat([(
-            <tr key="totalizador" className="report-total-row" style={{ fontWeight: 700 }}>
-              <td>Totalizador</td>
-              <td style={{ color: "var(--accent)" }}>{formatValue(totalRec)}</td>
-              <td style={{ color: "var(--danger)" }}>{formatValue(-totalCustos)}</td>
-              <td style={{ color: (totalRec - totalCustos) < 0 ? "var(--danger)" : "var(--accent)" }}>
-                {formatValue(totalRec - totalCustos)}
-              </td>
-            </tr>
-          )]);
+          const totalSaldo = totalRec - totalCustos;
+          return (
+            <div>
+              Total Receita: {formatValue(totalRec)} &nbsp;&nbsp;|&nbsp;&nbsp;
+              Total Custos: {formatValue(-totalCustos)} &nbsp;&nbsp;|&nbsp;&nbsp;
+              Saldo: <span style={{ color: totalSaldo < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(totalSaldo)}</span>
+            </div>
+          );
         })()}
-      </tbody>
-    </table>
+      </div>
+    </div>
   </div>
 )}
+
 
 
       {/* Agrupadores (drag & drop) */}
