@@ -10,12 +10,15 @@ import { db } from "./lib/database";
 import "./App.css";
 
 /**
- * Regras:
- * - Agrupadores e mapeamentos (conta -> agrupador) são GLOBAIS.
- * - Movimentações são por período; cada import INSERE (sem upsert e sem delete).
- * - Empresa: filtro nos relatórios/grupos (all/1/7) e empresa do arquivo no import (company).
+ * App principal
+ * - adiciona "categories" (categoria = agrupador de agrupadores)
+ * - tenta usar db.getCategorias() / db.getCategoriaAgrupadores() / db.saveCategorias()
+ *   se backend tiver suporte. Caso contrário, usa localStorage como fallback.
+ *
+ * Estilo do código: direto, comentado — você pediu que eu comente tudo.
  */
 
+/* ===== Constantes e utilitários ===== */
 const COMPANIES = [
   { id: "1", name: "LUIZ ANTONIO ORTOLLAN SALLES" },
   { id: "7", name: "JORGE AUGUSTO SALLES E OUTRO" },
@@ -30,6 +33,7 @@ const TABS = [
 const ALL = "all";
 const LS_COMPANY = "dfc-laosf:company";
 const LS_FILTERS = "dfc-laosf:filters";
+const LS_CATEGORIES = "dfc-laosf:categories";
 
 const MONTHS_PT = [
   "janeiro","fevereiro","março","abril","maio","junho",
@@ -41,35 +45,41 @@ const readSavedFilters = () => {
   catch { return null; }
 };
 
+/* ===== Componente principal ===== */
 export default function App() {
-  // Sidebar retrátil (default fechada)
+  /* Sidebar retrátil (default fechada) */
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Empresa usada no IMPORT (salva junto nas movimentações)
+  /* Empresa usada no IMPORT (salva junto nas movimentações) */
   const [company, setCompany] = useState(() => localStorage.getItem(LS_COMPANY) || COMPANIES[0].id);
   const [activeView, setActiveView] = useState("reports");
 
-  // Período do upload
+  /* Período do upload */
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
-  // Filtros globais (relatórios/grupos)
+  /* Filtros globais (relatórios/grupos) */
   const saved = readSavedFilters();
   const [currentMonth, setCurrentMonth] = useState(saved?.month ?? new Date().getMonth() + 1);
   const [currentYear, setCurrentYear] = useState(saved?.year ?? new Date().getFullYear());
   const [currentCostCenter, setCurrentCostCenter] = useState(saved?.costCenter ?? ALL);
   const [companyFilter, setCompanyFilter] = useState(saved?.companyFilter ?? ALL); // "all" | "1" | "7"
 
-  // Catálogo de CC
+  /* Catálogo de CC */
   const [costCenters, setCostCenters] = useState([]);
 
-  // Dados
+  /* Dados: agrupadores (aggs), contas, categorias */
   const [aggregators, setAggregators] = useState({
     unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: [] },
   });
   const [accounts, setAccounts] = useState({}); // { [id]: { id, name, valor, sign } }
 
-  // UI
+  /* Categorias (novo): objeto { [id]: { id, title, agrupadorIds: [] } } */
+  const [categories, setCategories] = useState({
+    uncategorized: { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] },
+  });
+
+  /* UI */
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState({});
   const [unit, setUnit] = useState("reais");
@@ -84,7 +94,7 @@ export default function App() {
 
   const fileInputRef = useRef(null);
 
-  // Helpers
+  /* ===== Helpers ===== */
   const parseBRNumber = (val) => {
     if (val == null) return 0;
     if (typeof val === "number" && Number.isFinite(val)) return val;
@@ -126,12 +136,12 @@ export default function App() {
     return null;
   };
 
-  // Carregar dados (aplica filtros globais)
+  /* ===== Carregar dados (aplica filtros globais) ===== */
   const loadMonthData = useCallback(async () => {
     try {
       setLoading(true);
 
-      // 1) CC
+      // 1) CC (centros de custo)
       try {
         const ccs = await db.getCentrosCusto?.();
         if (Array.isArray(ccs)) setCostCenters(ccs);
@@ -145,37 +155,29 @@ export default function App() {
       });
 
       // 3) Movimentações filtradas (mês pode ser null; CC null; empresa null)
-    // --- Normaliza filtros antes de chamar a API ---
-// Always use the reportFilters (UI) as source of truth and coerce types.
-// month -> null | number
-const monthParam = reportFilters.month === ALL ? null : Number(reportFilters.month);
-// year -> null | number (fall back to currentYear if missing)
-const yearParam = reportFilters.year == null ? Number(currentYear) : Number(reportFilters.year);
-// centro -> null | integer (idcentrocusto)
-const centroParam = (!reportFilters.costCenter || reportFilters.costCenter === ALL) 
-  ? null 
-  : Number(reportFilters.costCenter);
-// empresa -> null | string ("1" | "7")
-const empresaParam = (!reportFilters.companyFilter || reportFilters.companyFilter === ALL)
-  ? null
-  : String(reportFilters.companyFilter);
+      // Normaliza filtros antes de chamar a API
+      const monthParam = reportFilters.month === ALL ? null : Number(reportFilters.month);
+      const yearParam = reportFilters.year == null ? Number(currentYear) : Number(reportFilters.year);
+      const centroParam = (!reportFilters.costCenter || reportFilters.costCenter === ALL) 
+        ? null 
+        : Number(reportFilters.costCenter);
+      const empresaParam = (!reportFilters.companyFilter || reportFilters.companyFilter === ALL)
+        ? null
+        : String(reportFilters.companyFilter);
 
-// DEBUG: veja o que está sendo enviado
-console.debug("loadMonthData: params", { monthParam, yearParam, centroParam, empresaParam });
-
-// Assumindo db.getMovimentacoes que monta query string corretamente
-const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empresaParam);
-
+      // Fallback: usamos db.getMovimentacoes (wrapper) - ele deve enviar 'cc' e 'emp'
+      const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empresaParam);
 
       // 4) Atualiza nomes e acumula valores
       Object.values(contasMap).forEach((c) => { c.valor = 0; c.sign = "+"; });
 
-      movs.forEach((m) => {
+      (Array.isArray(movs) ? movs : []).forEach((m) => {
         if (!contasMap[m.idconta]) {
           contasMap[m.idconta] = { id: m.idconta, name: m.nome || m.conta_nome || `Conta ${m.idconta}`, valor: 0, sign: "+" };
         } else if (m.nome || m.conta_nome) {
           contasMap[m.idconta].name = m.nome || m.conta_nome;
         }
+        // somamos: crédito - débito (o delta no nosso modelo)
         const delta = (Number(m.credito) || 0) - (Number(m.debito) || 0);
         const atual = (contasMap[m.idconta].sign === "+" ? 1 : -1) * contasMap[m.idconta].valor;
         const novo = atual + delta;
@@ -197,14 +199,59 @@ const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empre
         if (gruposMap[gid] && contasMap[a.idconta]) gruposMap[gid].accountIds.push(a.idconta);
       });
 
-      // 7) Sem agrupador
+      // 7) Sem agrupador (preenche o unassigned)
       const assigned = new Set(
         Object.values(gruposMap).filter((g) => g.id !== "unassigned").flatMap((g) => g.accountIds || [])
       );
       gruposMap.unassigned.accountIds = Object.keys(contasMap).filter((id) => !assigned.has(id));
 
+      /* ===== Categorias (novo) =====
+         - tenta carregar do backend via db.getCategorias() + db.getCategoriaAgrupadores()
+         - fallback: localStorage
+         - garante que todo agrupador esteja em alguma categoria (uncategorized)
+      */
+      let categoriasMap = { uncategorized: { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] } };
+      try {
+        const dbCats = typeof db.getCategorias === "function" ? await db.getCategorias() : null;
+        const dbCatLinks = typeof db.getCategoriaAgrupadores === "function" ? await db.getCategoriaAgrupadores() : null;
+
+        if (Array.isArray(dbCats) && dbCats.length) {
+          categoriasMap = {};
+          dbCats.forEach((c) => {
+            categoriasMap[String(c.idcategoria)] = { id: String(c.idcategoria), title: c.nome, agrupadorIds: [] };
+          });
+          if (Array.isArray(dbCatLinks)) {
+            dbCatLinks.forEach((l) => {
+              const cid = String(l.idcategoria);
+              const gid = String(l.idagrupador);
+              if (categoriasMap[cid] && gruposMap[gid]) categoriasMap[cid].agrupadorIds.push(gid);
+            });
+          }
+        } else {
+          const raw = localStorage.getItem(LS_CATEGORIES);
+          if (raw) {
+            try {
+              const parsed = JSON.parse(raw);
+              if (parsed && typeof parsed === "object") categoriasMap = parsed;
+            } catch {}
+          }
+        }
+      } catch (e) {
+        console.warn("Erro ao carregar categorias (fallback local):", e?.message || e);
+      }
+
+      // garante que todo agrupador esteja em alguma categoria
+      const allGroupIds = Object.keys(gruposMap).filter((id) => id !== "unassigned");
+      const assignedGroupIds = new Set(Object.values(categoriasMap).flatMap((c) => c.agrupadorIds || []));
+      categoriasMap.uncategorized = categoriasMap.uncategorized || { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] };
+      categoriasMap.uncategorized.agrupadorIds = Array.from(
+        new Set([...(categoriasMap.uncategorized.agrupadorIds || []), ...allGroupIds.filter((g) => !assignedGroupIds.has(g))])
+      );
+
+      // Atualiza estados
       setAccounts(contasMap);
       setAggregators(gruposMap);
+      setCategories(categoriasMap);
     } catch (e) {
       console.error("Erro ao carregar dados:", e);
     } finally {
@@ -212,9 +259,10 @@ const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empre
     }
   }, [currentMonth, currentYear, currentCostCenter, reportFilters.month, companyFilter]);
 
+  /* Carrega ao montar e quando loadMonthData mudar */
   useEffect(() => { loadMonthData(); }, [loadMonthData]);
 
-  // Persistência
+  /* Persistência local */
   useEffect(() => { localStorage.setItem(LS_COMPANY, company); }, [company]);
   useEffect(() => {
     localStorage.setItem(
@@ -228,7 +276,9 @@ const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empre
     );
   }, [reportFilters.month, reportFilters.year, reportFilters.costCenter, companyFilter]);
 
-  // Salvar mapeamento global conta→agrupador
+  /* ===== Funções de manipulação ===== */
+
+  // Salvar mapeamento global conta->agrupador
   const handleSaveGroups = async () => {
     try {
       const associations = [];
@@ -245,13 +295,15 @@ const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empre
 
       await db.saveAgrupadorContas([...associations, ...unassignedItems]);
       alert("Mapeamento de contas salvo (global).");
+      // recarrega pra garantir consistência
+      loadMonthData().catch(() => {});
     } catch (e) {
       console.error(e);
       alert("Erro ao salvar agrupadores: " + e.message);
     }
   };
 
-  // Trocar sinal de uma conta (visual)
+  // Toggle visual do sinal de uma conta
   const toggleAccountSign = (id) => {
     setAccounts((prev) => {
       const a = prev[id]; if (!a) return prev;
@@ -259,7 +311,7 @@ const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empre
     });
   };
 
-  // DnD
+  // DnD: mover contas entre agrupadores
   const onDragEnd = ({ source, destination, draggableId }) => {
     if (!destination) return;
     if (source.droppableId === destination.droppableId && source.index === destination.index) return;
@@ -279,7 +331,7 @@ const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empre
     }));
   };
 
-  // Importação (insere) — sem upsert de contas no cliente
+  /* ===== Importação de Excel (mantive seu código) ===== */
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -340,8 +392,6 @@ const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empre
         const descricaoPlanilha = colDescricao !== -1 ? String(row[colDescricao] || "").trim() : "";
 
         // *** INVERTE CRÉDITO/DEBITO ***
-        // Na planilha: Crédito = receita, Débito = despesa/saída.
-        // No nosso modelo: 'credito' (entrada), 'debito' (saída).
         const deb = parseBRNumber(row[colCred]); // vira débito
         const cred = parseBRNumber(row[colDeb]); // vira crédito
         if (deb === 0 && cred === 0) continue;
@@ -382,7 +432,7 @@ const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empre
       setReportFilters((p) => ({ ...p, month: selectedMonth, year: selectedYear }));
       if (idCC) {
         setCurrentCostCenter(String(idCC));
-        setReportFilters((p) => ({ ...p, costCenter: String(idCC) }));
+        setReportFilters((p) => ({ ...p, costCenter: String(idCC) })); // também persiste no filtro
       }
 
       alert(
@@ -403,6 +453,7 @@ const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empre
   const formatValue = (value) =>
     `R$ ${Number(value || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
 
+  /* ===== Render ===== */
   return (
     <div className="container">
       {/* Botão toggle da sidebar */}
@@ -466,24 +517,15 @@ const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empre
           <label className="label" style={{ marginTop: 8 }}>Centro de Custo</label>
           <select
             value={String(reportFilters.costCenter)}
-            // Substitua o onChange do select de Centro de Custo por este trecho:
-onChange={(e) => {
-  // Normaliza o valor vindo do select: 'all' vira ALL, senão mantém string (id)
-  const cc = e.target.value === "all" ? ALL : e.target.value;
-
-  // Atualiza tanto o reportFilters (UI) quanto o estado currentCostCenter
-  setReportFilters((p) => ({ ...p, costCenter: cc }));
-  setCurrentCostCenter(cc);
-
-  // Chama imediatamente o loader para recarregar o relatório com o novo CC.
-  // loadMonthData é um função async criada com useCallback — chamar direto é ok.
-  // (não esperamos o setState terminar; passamos o filtro já normalizado via estado usado dentro da função)
-  loadMonthData().catch((err) => {
-    console.error("Erro ao recarregar dados após mudança de CC:", err);
-    alert("Falha ao atualizar relatório. Veja o console para detalhes.");
-  });
-}}
-
+            onChange={(e) => {
+              const cc = e.target.value === "all" ? ALL : e.target.value;
+              setReportFilters((p) => ({ ...p, costCenter: cc }));
+              setCurrentCostCenter(cc);
+              // chama load direto pra garantir recarregamento imediato
+              loadMonthData().catch((err) => {
+                console.error("Erro ao recarregar dados após mudança de CC:", err);
+              });
+            }}
           >
             <option value="all">Todos os Centros</option>
             {costCenters.map((cc) => (
@@ -546,7 +588,24 @@ onChange={(e) => {
           {activeView === "groups" && (
             <>
               <hr className="sidebar-sep" />
-              <AggregatorConfig aggregators={aggregators} onChanged={loadMonthData} />
+              {/* Passamos também categories e onSaveCategories para o config */}
+              <AggregatorConfig
+                aggregators={aggregators}
+                categories={categories}
+                onChanged={loadMonthData}
+                onSaveCategories={async (newCats) => {
+                  // handler para salvar categorias (backend se disponível, senão localStorage)
+                  setCategories(newCats);
+                  if (typeof db.saveCategorias === "function") {
+                    try { await db.saveCategorias(newCats); } catch (e) { console.warn("saveCategorias falhou:", e); }
+                  } else {
+                    localStorage.setItem(LS_CATEGORIES, JSON.stringify(newCats));
+                  }
+                  // recarrega view
+                  loadMonthData().catch(() => {});
+                }}
+                onSaveGroups={handleSaveGroups}
+              />
               <button onClick={handleSaveGroups} className="btn-save">Salvar agrupadores</button>
             </>
           )}
@@ -584,15 +643,19 @@ onChange={(e) => {
               </tr>
             </thead>
             <tbody>
+              {/* Render por CATEGORIA -> AGRUPADORES -> CONTAS */}
               {(() => {
-                const aggs = Object.values(aggregators);
+                const cats = Object.values(categories);
                 let totalRec = 0, totalDesp = 0;
 
-                return aggs
-                  .map((col) => {
+                const catSections = cats.map((cat) => {
+                  const catAggIds = (cat.agrupadorIds || []).filter((aid) => aggregators[aid]);
+
+                  const rows = catAggIds.map((aggId) => {
+                    const col = aggregators[aggId];
                     const ids = col.id === "unassigned"
                       ? Object.keys(accounts).filter((id) =>
-                          aggs.filter((a) => a.id !== "unassigned").every((a) => !(a.accountIds || []).includes(id))
+                          Object.values(aggregators).filter((a) => a.id !== "unassigned").every((a) => !(a.accountIds || []).includes(id))
                         )
                       : (col.accountIds || []).filter((id) => accounts[id]);
 
@@ -601,62 +664,84 @@ onChange={(e) => {
                     const res = rec - desp;
                     totalRec += rec; totalDesp += desp;
 
-                    return (
-                      <React.Fragment key={col.id}>
+                    return { aggId, title: col.title, ids, rec, desp, res };
+                  });
+
+                  const catRec = rows.reduce((s, r) => s + r.rec, 0);
+                  const catDesp = rows.reduce((s, r) => s + r.desp, 0);
+                  const catRes = catRec - catDesp;
+
+                  return { cat, rows, catRec, catDesp, catRes };
+                });
+
+                return catSections.flatMap(({ cat, rows, catRec, catDesp, catRes }) => {
+                  if (!rows.length) return []; // opcional: pular categorias sem agrupadores
+                  return [
+                    <tr key={`cat-${cat.id}`} className="category-header-row" style={{ background: "#e9f5ea", fontWeight: 700 }}>
+                      <td colSpan={4}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span>{cat.title}</span>
+                          <span>
+                            <strong>R$ {Number(catRes || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
+                            &nbsp;&nbsp;
+                            <small style={{ color: "#4CAF50" }}>Receita: {formatValue(catRec)}</small>
+                            &nbsp;&nbsp;
+                            <small style={{ color: "#D32F2F" }}>Custos: {formatValue(-catDesp)}</small>
+                          </span>
+                        </div>
+                      </td>
+                    </tr>,
+
+                    ...rows.map((r) => (
+                      <React.Fragment key={`agg-${r.aggId}`}>
                         <tr
                           className="report-header-row"
-                          onClick={() => setExpanded((p) => ({ ...p, [col.id]: !p[col.id] }))}
+                          onClick={() => setExpanded((p) => ({ ...p, [r.aggId]: !p[r.aggId] }))}
                           style={{ cursor: "pointer" }}
                         >
-                          <td>{col.title}</td>
-                          <td style={{ color: "var(--accent)" }}>{formatValue(rec)}</td>
-                          <td style={{ color: "var(--danger)" }}>{formatValue(-desp)}</td>
-                          <td style={{ color: res < 0 ? "var(--danger)" : "var(--accent)" }}>
-                            {formatValue(res)}
-                          </td>
+                          <td style={{ paddingLeft: 12 }}>{r.title}</td>
+                          <td style={{ color: "var(--accent)" }}>{formatValue(r.rec)}</td>
+                          <td style={{ color: "var(--danger)" }}>{formatValue(-r.desp)}</td>
+                          <td style={{ color: r.res < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(r.res)}</td>
                         </tr>
 
-                        {expanded[col.id] && ids.map((id) => {
+                        {expanded[r.aggId] && r.ids.map((id) => {
                           const a = accounts[id];
                           if (!a) return null;
                           const recA = a.sign === "+" ? a.valor : 0;
                           const despA = a.sign === "-" ? a.valor : 0;
                           const resA = recA - despA;
                           return (
-                            <tr key={id} className="report-account-row">
-                              <td style={{ paddingLeft: 20 }}>
-                                {id} – {a.name}
-                              </td>
+                            <tr key={`acct-${id}`} className="report-account-row">
+                              <td style={{ paddingLeft: 28 }}>{id} – {a.name}</td>
                               <td style={{ color: "var(--accent)" }}>{formatValue(recA)}</td>
                               <td style={{ color: "var(--danger)" }}>{formatValue(-despA)}</td>
-                              <td style={{ color: resA < 0 ? "var(--danger)" : "var(--accent)" }}>
-                                {formatValue(resA)}
-                              </td>
+                              <td style={{ color: resA < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(resA)}</td>
                             </tr>
                           );
                         })}
                       </React.Fragment>
-                    );
-                  })
-                  .concat([(() => {
-                    const totRes = totalRec - totalDesp;
-                    return (
-                      <tr key="totalizador" className="report-total-row" style={{ fontWeight: 600 }}>
-                        <td>Totalizador</td>
-                        <td style={{ color: "var(--accent)" }}>{formatValue(totalRec)}</td>
-                        <td style={{ color: "var(--danger)" }}>{formatValue(-totalDesp)}</td>
-                        <td style={{ color: totRes < 0 ? "var(--danger)" : "var(--accent)" }}>
-                          {formatValue(totRes)}
-                        </td>
-                      </tr>
-                    );
-                  })()]);
+                    ))
+                  ];
+                })
+                .concat([(() => {
+                  const totRes = totalRec - totalDesp;
+                  return (
+                    <tr key="totalizador" className="report-total-row" style={{ fontWeight: 600 }}>
+                      <td>Totalizador</td>
+                      <td style={{ color: "var(--accent)" }}>{formatValue(totalRec)}</td>
+                      <td style={{ color: "var(--danger)" }}>{formatValue(-totalDesp)}</td>
+                      <td style={{ color: totRes < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(totRes)}</td>
+                    </tr>
+                  );
+                })()]);
               })()}
             </tbody>
           </table>
         </div>
       )}
 
+      {/* Agrupadores (drag & drop) */}
       {activeView === "groups" && (
         <DragDropContext onDragEnd={onDragEnd}>
           <div className="grid">

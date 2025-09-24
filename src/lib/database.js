@@ -37,6 +37,31 @@ export const db = {
     return fetch(url).then(j);
   },
 
+  // getCategorias -> retorna array [{ idcategoria, nome }]
+  async getCategorias() {
+    const res = await fetch("/api/categorias");
+    const json = await res.json();
+    return Array.isArray(json.categorias) ? json.categorias : [];
+  },
+
+  // getCategoriaAgrupadores -> retorna array [{ idcategoria, idagrupador }]
+  async getCategoriaAgrupadores() {
+    const res = await fetch("/api/categorias");
+    const json = await res.json();
+    return Array.isArray(json.links) ? json.links : [];
+  },
+
+  // saveCategorias: envia o mapa de categorias (frontend) para backend
+  async saveCategorias(categoriesMap) {
+    // categoriesMap: objeto { id: { id, title, agrupadorIds: [] }, ... }
+    const resp = await fetch("/api/categorias", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ categorias: categoriesMap }),
+    });
+    return resp.json();
+  },
+
   /**
    * Insere lote de movimentações (NÃO apaga nada; o servidor só dá INSERT).
    * movimentacoes: [{ idconta, debito, credito, idcentrocusto?, centrocusto_nome?, centrocusto_codigo? }, ...]
