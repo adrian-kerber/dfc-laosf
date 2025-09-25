@@ -1,4 +1,4 @@
-// App.jsx
+// App.jsx - Versão com estrutura por Centro de Custo
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
@@ -10,11 +10,13 @@ import { db } from "./lib/database";
 import "./App.css";
 
 /**
- * App.jsx - versão integrando persistência de CATEGORIAS no DB (preferencial)
- * - Usa db.getCategorias() e db.getCategoriaAgrupadores() se existirem
- * - Usa db.saveCategorias(newCategories) para persistir (se disponível)
- * - Fallback para localStorage (LS_CATEGORIES) quando backend indisponível
- * - INTEGRADO com AggregatorConfig que já tem interface de categorias
+ * App.jsx - NOVA VERSÃO: estrutura por Centro de Custo
+ * 
+ * PRINCIPAIS MUDANÇAS:
+ * - Cada centro de custo tem suas próprias categorias/agrupadores
+ * - A mesma conta pode estar em categorias diferentes por centro
+ * - localStorage e DB agora armazenam por centro de custo
+ * - Interface mostra apenas dados do centro selecionado
  */
 
 /* ===== Constantes ===== */
@@ -33,21 +35,12 @@ const TABS = [
 const ALL = "all";
 const LS_COMPANY = "dfc-laosf:company";
 const LS_FILTERS = "dfc-laosf:filters";
-const LS_CATEGORIES = "dfc-laosf:categories";
+const LS_CATEGORIES_BY_CC = "dfc-laosf:categories-by-cc"; // NOVO: por centro de custo
 
-/* Optionally change default categories here if you want initial seeds */
-const DEFAULT_CATEGORIES = {
-  "granja-dona-clara-i": { id: "granja-dona-clara-i", title: "GRANJA DONA CLARA I", agrupadorIds: [] },
-  "granja-dona-clara-ii": { id: "granja-dona-clara-ii", title: "GRANJA DONA CLARA II", agrupadorIds: [] },
-  "agricultura": { id: "agricultura", title: "AGRICULTURA", agrupadorIds: [] },
-  "apoio": { id: "apoio", title: "APOIO", agrupadorIds: [] },
-  "diretoria": { id: "diretoria", title: "DIRETORIA", agrupadorIds: [] },
-  "apicultura-avicultura-bovino-piscicultura": {
-    id: "apicultura-avicultura-bovino-piscicultura",
-    title: "APICULTURA, AVICULTURA, BOVINOCULTURA E PISCICULTURA",
-    agrupadorIds: []
-  },
-  "uncategorized": { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] }
+/* Categorias padrão por centro de custo */
+const DEFAULT_CATEGORIES_BY_CC = {
+  // Cada centro de custo tem suas próprias categorias
+  // Formato: { [centroId]: { [catId]: { id, title, agrupadorIds } } }
 };
 
 const MONTHS_PT = [
@@ -56,8 +49,31 @@ const MONTHS_PT = [
 ];
 
 const readSavedFilters = () => {
-  try { const raw = localStorage.getItem(LS_FILTERS); return raw ? JSON.parse(raw) : null; }
-  catch { return null; }
+  try { 
+    const raw = localStorage.getItem(LS_FILTERS); 
+    return raw ? JSON.parse(raw) : null; 
+  } catch { 
+    return null; 
+  }
+};
+
+// NOVA FUNÇÃO: Lê categorias por centro de custo do localStorage
+const readCategoriesByCC = () => {
+  try {
+    const raw = localStorage.getItem(LS_CATEGORIES_BY_CC);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+};
+
+// NOVA FUNÇÃO: Salva categorias por centro de custo no localStorage  
+const saveCategoriesByCC = (categoriesByCC) => {
+  try {
+    localStorage.setItem(LS_CATEGORIES_BY_CC, JSON.stringify(categoriesByCC));
+  } catch (e) {
+    console.warn("Erro ao salvar categorias por CC:", e);
+  }
 };
 
 /* ===== App ===== */
@@ -82,21 +98,15 @@ export default function App() {
   const [aggregators, setAggregators] = useState({
     unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: [] },
   });
-  const [accounts, setAccounts] = useState({}); // { id: { id, name, valor, sign } }
+  const [accounts, setAccounts] = useState({});
 
-  /* Categorias: prefer DB, fallback localStorage, fallback DEFAULT_CATEGORIES */
-  const [categories, setCategories] = useState(() => {
-    try {
-      const raw = localStorage.getItem(LS_CATEGORIES);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object" && Object.keys(parsed).length) return parsed;
-      }
-    } catch (e) {
-      console.warn("Erro lendo LS_CATEGORIES:", e);
-    }
-    return DEFAULT_CATEGORIES;
-  });
+  /* NOVA ESTRUTURA: Categorias por centro de custo */
+  const [categoriesByCC, setCategoriesByCC] = useState(readCategoriesByCC);
+  
+  // Categorias do centro de custo atual (para compatibilidade com AggregatorConfig)
+  const currentCategories = currentCostCenter === ALL 
+    ? { uncategorized: { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] } }
+    : (categoriesByCC[currentCostCenter] || { uncategorized: { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] } });
 
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState({});
@@ -121,15 +131,19 @@ export default function App() {
     const n = parseFloat(s.replace(/\s+/g, "").replace(/\./g, "").replace(/,/g, "."));
     return Number.isFinite(n) ? n : 0;
   };
+
   const norm = (x) => String(x || "").toLowerCase().replace(/\s+/g, " ").trim();
+  
   const findCol = (headerRow, candidates) => {
     const H = headerRow.map(norm);
     for (let i = 0; i < H.length; i++) {
-      const cell = H[i]; if (!cell) continue;
+      const cell = H[i]; 
+      if (!cell) continue;
       if (candidates.some((c) => cell.includes(c))) return i;
     }
     return -1;
   };
+
   const extractCostCenter = (rows) => {
     const MAX = Math.min(rows.length, 30);
     for (let i = 0; i < MAX; i++) {
@@ -146,7 +160,10 @@ export default function App() {
           if (!raw) return null;
           let id = null, nome = raw;
           const m = raw.match(/^(\d+)\s*[-–—:]?\s*(.+)$/);
-          if (m) { id = m[1].trim(); nome = m[2].trim(); }
+          if (m) { 
+            id = m[1].trim(); 
+            nome = m[2].trim(); 
+          }
           return { id: id || null, nome };
         }
       }
@@ -154,7 +171,7 @@ export default function App() {
     return null;
   };
 
-  /* ===== Load data (with categories from DB when possible) ===== */
+  /* ===== NOVA FUNÇÃO: Load data por centro de custo ===== */
   const loadMonthData = useCallback(async () => {
     try {
       setLoading(true);
@@ -163,29 +180,52 @@ export default function App() {
       try {
         const ccs = await db.getCentrosCusto?.();
         if (Array.isArray(ccs)) setCostCenters(ccs);
-      } catch (e) { console.warn("getCentrosCusto error:", e?.message || e); }
+      } catch (e) { 
+        console.warn("getCentrosCusto error:", e?.message || e); 
+      }
 
       // 2) Contas (catalog)
       const contas = await db.getContas();
       const contasMap = {};
-      contas.forEach((c) => { contasMap[c.idconta] = { id: c.idconta, name: c.nome, valor: 0, sign: "+" }; });
+      contas.forEach((c) => { 
+        contasMap[c.idconta] = { 
+          id: c.idconta, 
+          name: c.nome, 
+          valor: 0, 
+          sign: "+" 
+        }; 
+      });
 
-      // 3) Movimentações (filtros)
+      // 3) Movimentações (filtros) - IMPORTANTE: só do centro selecionado se não for ALL
       const monthParam = reportFilters.month === ALL ? null : Number(reportFilters.month);
       const yearParam = reportFilters.year == null ? Number(currentYear) : Number(reportFilters.year);
-      const centroParam = (!reportFilters.costCenter || reportFilters.costCenter === ALL) ? null : Number(reportFilters.costCenter);
-      const empresaParam = (!reportFilters.companyFilter || reportFilters.companyFilter === ALL) ? null : String(reportFilters.companyFilter);
+      const centroParam = (!reportFilters.costCenter || reportFilters.costCenter === ALL) 
+        ? null 
+        : Number(reportFilters.costCenter);
+      const empresaParam = (!reportFilters.companyFilter || reportFilters.companyFilter === ALL) 
+        ? null 
+        : String(reportFilters.companyFilter);
 
       const movs = await db.getMovimentacoes(monthParam, yearParam, centroParam, empresaParam);
 
-      // 4) acumula valores
-      Object.values(contasMap).forEach((c) => { c.valor = 0; c.sign = "+"; });
+      // 4) Acumula valores
+      Object.values(contasMap).forEach((c) => { 
+        c.valor = 0; 
+        c.sign = "+"; 
+      });
+      
       (Array.isArray(movs) ? movs : []).forEach((m) => {
         if (!contasMap[m.idconta]) {
-          contasMap[m.idconta] = { id: m.idconta, name: m.nome || m.conta_nome || `Conta ${m.idconta}`, valor: 0, sign: "+" };
+          contasMap[m.idconta] = { 
+            id: m.idconta, 
+            name: m.nome || m.conta_nome || `Conta ${m.idconta}`, 
+            valor: 0, 
+            sign: "+" 
+          };
         } else if (m.nome || m.conta_nome) {
           contasMap[m.idconta].name = m.nome || m.conta_nome;
         }
+        
         const delta = (Number(m.credito) || 0) - (Number(m.debito) || 0);
         const atual = (contasMap[m.idconta].sign === "+" ? 1 : -1) * contasMap[m.idconta].valor;
         const novo = atual + delta;
@@ -193,91 +233,145 @@ export default function App() {
         contasMap[m.idconta].sign = novo >= 0 ? "+" : "-";
       });
 
-      // 5) agrupadores
-      const grupos = await db.getAgrupadores();
-      const gruposMap = { unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: [] } };
-      grupos.forEach((g) => { gruposMap[String(g.idagrupador)] = { id: String(g.idagrupador), title: g.nome, accountIds: [] }; });
+      // 5) NOVA LÓGICA: Agrupadores por centro de custo
+      let gruposMap = { 
+        unassigned: { 
+          id: "unassigned", 
+          title: "Sem agrupador", 
+          accountIds: [] 
+        } 
+      };
 
-      // 6) ligações conta->agrupador
-      const liga = await db.getAgrupadorContas();
-      liga.forEach((a) => {
-        const gid = String(a.idagrupador);
-        if (gruposMap[gid] && contasMap[a.idconta]) gruposMap[gid].accountIds.push(a.idconta);
-      });
-
-      // 7) sem agrupador
-      const assigned = new Set(Object.values(gruposMap).filter((g) => g.id !== "unassigned").flatMap((g) => g.accountIds || []));
-      gruposMap.unassigned.accountIds = Object.keys(contasMap).filter((id) => !assigned.has(id));
-
-      /* ===== categorias: tentar carregar do DB (preferencial) ===== */
-      let categoriasMap = { uncategorized: { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] } };
-      try {
-        // db.getCategorias() -> expected array [{ idcategoria, nome }, ...]
-        const dbCats = typeof db.getCategorias === "function" ? await db.getCategorias() : null;
-        const dbLinks = typeof db.getCategoriaAgrupadores === "function" ? await db.getCategoriaAgrupadores() : null;
-
-        if (Array.isArray(dbCats) && dbCats.length) {
-          categoriasMap = {};
-          dbCats.forEach((c) => {
-            categoriasMap[String(c.idcategoria)] = { id: String(c.idcategoria), title: c.nome, agrupadorIds: [] };
+      if (centroParam) {
+        // Se tem centro específico, busca agrupadores deste centro
+        try {
+          const grupos = await db.getAgrupadores(); // Você pode modificar para filtrar por centro
+          grupos.forEach((g) => { 
+            gruposMap[String(g.idagrupador)] = { 
+              id: String(g.idagrupador), 
+              title: g.nome, 
+              accountIds: [] 
+            }; 
           });
-          if (Array.isArray(dbLinks)) {
-            dbLinks.forEach((l) => {
-              const cid = String(l.idcategoria);
-              const gid = String(l.idagrupador);
-              if (categoriasMap[cid] && gruposMap[gid]) categoriasMap[cid].agrupadorIds.push(gid);
-            });
-          }
-          // persist in localStorage as cache for UI speed (optional)
-          try { localStorage.setItem(LS_CATEGORIES, JSON.stringify(categoriasMap)); } catch {}
-        } else {
-          // fallback: localStorage or default
-          const raw = localStorage.getItem(LS_CATEGORIES);
-          if (raw) {
-            try {
-              const parsed = JSON.parse(raw);
-              if (parsed && typeof parsed === "object") categoriasMap = parsed;
-            } catch {}
-          } else {
-            categoriasMap = DEFAULT_CATEGORIES;
-            try { localStorage.setItem(LS_CATEGORIES, JSON.stringify(categoriasMap)); } catch {}
-          }
-        }
-      } catch (e) {
-        console.warn("Erro ao carregar categorias (fallback local):", e?.message || e);
-        // fallback local
-        const raw = localStorage.getItem(LS_CATEGORIES);
-        if (raw) {
-          try { categoriasMap = JSON.parse(raw); } catch {}
-        } else {
-          categoriasMap = DEFAULT_CATEGORIES;
+
+          // Ligações conta->agrupador (filtradas por centro se possível)
+          const liga = await db.getAgrupadorContas(); // Você pode modificar para filtrar por centro
+          liga.forEach((a) => {
+            const gid = String(a.idagrupador);
+            if (gruposMap[gid] && contasMap[a.idconta]) {
+              gruposMap[gid].accountIds.push(a.idconta);
+            }
+          });
+        } catch (e) {
+          console.warn("Erro ao carregar agrupadores:", e);
         }
       }
 
-      // garante que todo agrupador esteja em alguma categoria (move não atribuídos para uncategorized)
+      // Sem agrupador
+      const assigned = new Set(
+        Object.values(gruposMap)
+          .filter((g) => g.id !== "unassigned")
+          .flatMap((g) => g.accountIds || [])
+      );
+      gruposMap.unassigned.accountIds = Object.keys(contasMap).filter((id) => !assigned.has(id));
+
+      // 6) NOVA LÓGICA: Categorias por centro de custo
+      let currentCategoriesMap = { 
+        uncategorized: { 
+          id: "uncategorized", 
+          title: "Sem categoria", 
+          agrupadorIds: [] 
+        } 
+      };
+
+      if (centroParam) {
+        // Tenta carregar do banco para este centro específico
+        try {
+          // Você precisaria modificar estas funções para aceitar centro de custo
+          const dbCats = typeof db.getCategorias === "function" 
+            ? await db.getCategorias(centroParam) 
+            : null;
+          const dbLinks = typeof db.getCategoriaAgrupadores === "function" 
+            ? await db.getCategoriaAgrupadores(centroParam) 
+            : null;
+
+          if (Array.isArray(dbCats) && dbCats.length) {
+            currentCategoriesMap = {};
+            dbCats.forEach((c) => {
+              currentCategoriesMap[String(c.idcategoria)] = { 
+                id: String(c.idcategoria), 
+                title: c.nome, 
+                agrupadorIds: [] 
+              };
+            });
+            
+            if (Array.isArray(dbLinks)) {
+              dbLinks.forEach((l) => {
+                const cid = String(l.idcategoria);
+                const gid = String(l.idagrupador);
+                if (currentCategoriesMap[cid] && gruposMap[gid]) {
+                  currentCategoriesMap[cid].agrupadorIds.push(gid);
+                }
+              });
+            }
+          } else {
+            // Fallback: localStorage por centro
+            const categoriesByCC = readCategoriesByCC();
+            currentCategoriesMap = categoriesByCC[String(centroParam)] || currentCategoriesMap;
+          }
+        } catch (e) {
+          console.warn("Erro ao carregar categorias por centro:", e);
+          // Fallback: localStorage
+          const categoriesByCC = readCategoriesByCC();
+          currentCategoriesMap = categoriesByCC[String(centroParam)] || currentCategoriesMap;
+        }
+
+        // Atualiza o estado global das categorias por centro
+        setCategoriesByCC(prev => ({
+          ...prev,
+          [String(centroParam)]: currentCategoriesMap
+        }));
+      }
+
+      // Garante que todo agrupador esteja em alguma categoria
       const allGroupIds = Object.keys(gruposMap).filter((id) => id !== "unassigned");
-      const assignedGroupIds = new Set(Object.values(categoriasMap).flatMap((c) => c.agrupadorIds || []));
-      categoriasMap.uncategorized = categoriasMap.uncategorized || { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] };
-      categoriasMap.uncategorized.agrupadorIds = Array.from(
-        new Set([...(categoriasMap.uncategorized.agrupadorIds || []), ...allGroupIds.filter((g) => !assignedGroupIds.has(g))])
+      const assignedGroupIds = new Set(
+        Object.values(currentCategoriesMap).flatMap((c) => c.agrupadorIds || [])
+      );
+      
+      currentCategoriesMap.uncategorized = currentCategoriesMap.uncategorized || { 
+        id: "uncategorized", 
+        title: "Sem categoria", 
+        agrupadorIds: [] 
+      };
+      currentCategoriesMap.uncategorized.agrupadorIds = Array.from(
+        new Set([
+          ...(currentCategoriesMap.uncategorized.agrupadorIds || []), 
+          ...allGroupIds.filter((g) => !assignedGroupIds.has(g))
+        ])
       );
 
-      // atualiza estados
+      // Atualiza estados
       setAccounts(contasMap);
       setAggregators(gruposMap);
-      setCategories(categoriasMap);
+      
     } catch (e) {
       console.error("Erro ao carregar dados:", e);
     } finally {
       setLoading(false);
     }
-  }, [currentMonth, currentYear, currentCostCenter, reportFilters.month, companyFilter]);
+  }, [currentMonth, currentYear, currentCostCenter, reportFilters.month, reportFilters.year, reportFilters.costCenter, companyFilter]);
 
-  /* carregar on mount / quando filtros mudarem */
-  useEffect(() => { loadMonthData(); }, [loadMonthData]);
+  /* Carregar on mount / quando filtros mudarem */
+  useEffect(() => { 
+    loadMonthData(); 
+  }, [loadMonthData]);
 
-  /* persist filtros/company */
-  useEffect(() => { localStorage.setItem(LS_COMPANY, company); }, [company]);
+  /* Persist filtros/company */
+  useEffect(() => { 
+    localStorage.setItem(LS_COMPANY, company); 
+  }, [company]);
+  
   useEffect(() => {
     localStorage.setItem(LS_FILTERS, JSON.stringify({
       month: reportFilters.month,
@@ -287,25 +381,32 @@ export default function App() {
     }));
   }, [reportFilters.month, reportFilters.year, reportFilters.costCenter, companyFilter]);
 
-  /* ===== salvar categorias (chamado pelo AggregatorConfig via onSaveCategories) ===== */
-  // converte o mapa local -> payload esperado pelo backend
+  /* ===== NOVA FUNÇÃO: Salvar categorias por centro de custo ===== */
   const handleSaveCategories = async (newCats) => {
-    // newCats should be an object: { id: { id, title, agrupadorIds: [] }, ... }
+    if (currentCostCenter === ALL) {
+      alert("Selecione um centro de custo específico para gerenciar categorias.");
+      return;
+    }
+
     try {
       setLoading(true);
-      // first, update local state & cache
-      setCategories(newCats);
-      try { localStorage.setItem(LS_CATEGORIES, JSON.stringify(newCats)); } catch {}
+      
+      // Atualiza estrutura por centro de custo
+      const newCategoriesByCC = {
+        ...categoriesByCC,
+        [String(currentCostCenter)]: newCats
+      };
+      
+      setCategoriesByCC(newCategoriesByCC);
+      saveCategoriesByCC(newCategoriesByCC);
 
-      // Try saving to DB if function exists
+      // Tenta salvar no banco (você precisaria modificar esta função)
       if (typeof db.saveCategorias === "function") {
-        await db.saveCategorias(newCats);
-        // after saving on DB, reload to ensure IDs and links are consistent from DB
+        await db.saveCategorias(newCats, Number(currentCostCenter)); // Passa o centro de custo
         await loadMonthData();
-        alert("Categorias salvas no banco.");
+        alert("Categorias salvas no banco para este centro de custo.");
       } else {
-        // fallback: keep only local storage
-        alert("Categorias salvas localmente (localStorage). Para salvar no banco, implemente db.saveCategorias().");
+        alert("Categorias salvas localmente para este centro de custo.");
       }
     } catch (e) {
       console.error("Erro ao salvar categorias:", e);
@@ -315,23 +416,38 @@ export default function App() {
     }
   };
 
-  /* ===== handleSaveGroups (mapeamento contas->agrupador) - seu código original ===== */
+  /* ===== NOVA FUNÇÃO: Salvar agrupadores por centro de custo ===== */
   const handleSaveGroups = async () => {
+    if (currentCostCenter === ALL) {
+      alert("Selecione um centro de custo específico para gerenciar agrupadores.");
+      return;
+    }
+
     try {
       const associations = [];
       Object.values(aggregators).forEach((agg) => {
         if (agg.id === "unassigned") return;
         (agg.accountIds || []).forEach((accountId) => {
-          associations.push({ idconta: String(accountId), idagrupador: Number(agg.id) });
+          associations.push({ 
+            idconta: String(accountId), 
+            idagrupador: Number(agg.id),
+            idcentrocusto: Number(currentCostCenter) // NOVO: associa ao centro atual
+          });
         });
       });
+
       const mapped = new Set(associations.map((a) => a.idconta));
       const unassignedItems = Object.keys(accounts)
         .filter((id) => !mapped.has(id))
-        .map((id) => ({ idconta: String(id), idagrupador: null }));
+        .map((id) => ({ 
+          idconta: String(id), 
+          idagrupador: null,
+          idcentrocusto: Number(currentCostCenter) 
+        }));
 
+      // Você precisaria modificar esta função para aceitar centro de custo
       await db.saveAgrupadorContas([...associations, ...unassignedItems]);
-      alert("Mapeamento de contas salvo (global).");
+      alert(`Mapeamento de contas salvo para centro de custo ${currentCostCenter}.`);
       loadMonthData().catch(() => {});
     } catch (e) {
       console.error(e);
@@ -339,10 +455,11 @@ export default function App() {
     }
   };
 
-  /* ===== demais utilitários e import logic (mantive exatamente igual ao seu) ===== */
+  /* ===== Demais funções mantidas iguais ===== */
   const toggleAccountSign = (id) => {
     setAccounts((prev) => {
-      const a = prev[id]; if (!a) return prev;
+      const a = prev[id]; 
+      if (!a) return prev;
       return { ...prev, [id]: { ...a, sign: a.sign === "+" ? "-" : "+" } };
     });
   };
@@ -389,7 +506,9 @@ export default function App() {
         try {
           const savedCC = await db.upsertCentroCusto?.({ codigo: centro.id, nome: centro.nome });
           idCC = savedCC?.idcentrocusto ?? null;
-        } catch (e1) { console.warn("upsertCentroCusto falhou:", e1?.message || e1); }
+        } catch (e1) { 
+          console.warn("upsertCentroCusto falhou:", e1?.message || e1); 
+        }
       }
 
       // 2) Cabeçalho
@@ -400,7 +519,10 @@ export default function App() {
         const hasCred = r.some((c) => c.includes("crédito") || c.includes("credito"));
         const hasCodigo = r.some((c) => c.includes("código") || c.includes("codigo"));
         const hasDesc = r.some((c) => c.includes("descrição") || c.includes("descricao"));
-        if (hasDeb && hasCred && (hasCodigo) && hasDesc) { headerIdx = i; break; }
+        if (hasDeb && hasCred && (hasCodigo) && hasDesc) { 
+          headerIdx = i; 
+          break; 
+        }
       }
       if (headerIdx === -1) return alert("Não encontrei cabeçalhos (Código/Descrição/Débito/Crédito).");
 
@@ -425,9 +547,8 @@ export default function App() {
         const id = codigoRaw;
         const descricaoPlanilha = colDescricao !== -1 ? String(row[colDescricao] || "").trim() : "";
 
-        // *** INVERTE CRÉDITO/DEBITO ***
-        const deb = parseBRNumber(row[colCred]); // vira débito
-        const cred = parseBRNumber(row[colDeb]); // vira crédito
+        const deb = parseBRNumber(row[colCred]);
+        const cred = parseBRNumber(row[colDeb]);
         if (deb === 0 && cred === 0) continue;
 
         movimentacoes.push({
@@ -451,7 +572,7 @@ export default function App() {
         };
       }
 
-      // 4) Grava (INSERE) + empresa do import
+      // 4) Grava no banco
       await db.saveMovimentacoes(movimentacoes, selectedMonth, selectedYear, company);
 
       // 5) UI rápida
@@ -548,6 +669,7 @@ export default function App() {
               .map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
 
+          {/* AVISO: Centro de custo agora é obrigatório para configurar */}
           <label className="label" style={{ marginTop: 8 }}>Centro de Custo</label>
           <select
             value={String(reportFilters.costCenter)}
@@ -555,7 +677,6 @@ export default function App() {
               const cc = e.target.value === "all" ? ALL : e.target.value;
               setReportFilters((p) => ({ ...p, costCenter: cc }));
               setCurrentCostCenter(cc);
-              // chama load direto pra garantir recarregamento imediato
               loadMonthData().catch((err) => {
                 console.error("Erro ao recarregar dados após mudança de CC:", err);
               });
@@ -573,7 +694,7 @@ export default function App() {
           <select
             value={String(companyFilter)}
             onChange={(e) => {
-              const v = e.target.value; // "all" | "1" | "7"
+              const v = e.target.value;
               setCompanyFilter(v);
               setReportFilters((p) => ({ ...p, companyFilter: v }));
             }}
@@ -622,14 +743,50 @@ export default function App() {
           {(activeView === "groups" || activeView === "categories") && (
             <>
               <hr className="sidebar-sep" />
-              {/* AggregatorConfig já tem interface completa de categorias integrada */}
-              <AggregatorConfig
-                aggregators={aggregators}
-                categories={categories}
-                onChanged={loadMonthData}
-                onSaveCategories={handleSaveCategories}
-                onSaveGroups={handleSaveGroups}
-              />
+              
+              {/* NOVO AVISO: Centro de custo obrigatório */}
+              {currentCostCenter === ALL ? (
+                <div style={{ 
+                  padding: 12, 
+                  backgroundColor: "#fff3cd", 
+                  border: "1px solid #ffeaa7", 
+                  borderRadius: 4,
+                  marginBottom: 12,
+                  color: "#856404"
+                }}>
+                  <strong>⚠️ Selecione um Centro de Custo específico</strong>
+                  <br />
+                  Para configurar agrupadores e categorias, você precisa escolher um centro de custo específico acima.
+                  Cada centro tem sua própria estrutura organizacional.
+                </div>
+              ) : (
+                <>
+                  <div style={{ 
+                    padding: 8, 
+                    backgroundColor: "#d4edda", 
+                    border: "1px solid #c3e6cb",
+                    borderRadius: 4,
+                    marginBottom: 12,
+                    color: "#155724",
+                    fontSize: 14
+                  }}>
+                    <strong>📋 Configurando:</strong> {
+                      (() => {
+                        const cc = costCenters.find(c => String(c.idcentrocusto) === String(currentCostCenter));
+                        return cc ? `${cc.codigo ? cc.codigo + ' - ' : ''}${cc.nome}` : `Centro ${currentCostCenter}`;
+                      })()
+                    }
+                  </div>
+                  
+                  <AggregatorConfig
+                    aggregators={aggregators}
+                    categories={currentCategories}
+                    onChanged={loadMonthData}
+                    onSaveCategories={handleSaveCategories}
+                    onSaveGroups={handleSaveGroups}
+                  />
+                </>
+              )}
             </>
           )}
         </div>
@@ -656,71 +813,141 @@ export default function App() {
             })()}
           </h2>
 
-          <div className="categories-grid">
-            {(() => {
-              // coleta categorias (mantém ordem natural; se quiser ordem customizada, defina um array)
-              const cats = Object.values(categories || {});
-              // calcula valores por categoria
-              return cats.map((cat) => {
-                const catAggIds = (cat.agrupadorIds || []).filter((aid) => aggregators[aid]);
-
-                let catRec = 0;
-                let catCustos = 0;
-
-                catAggIds.forEach((aggId) => {
-                  const col = aggregators[aggId];
-                  if (!col) return;
-                  const ids = col.id === "unassigned"
-                    ? Object.keys(accounts).filter((id) =>
-                        Object.values(aggregators).filter((a) => a.id !== "unassigned").every((a) => !(a.accountIds || []).includes(id))
-                      )
-                    : (col.accountIds || []).filter((id) => accounts[id]);
-
-                  ids.forEach((id) => {
-                    const a = accounts[id];
-                    if (!a) return;
-                    if (a.sign === "+") catRec += Number(a.valor || 0);
-                    else catCustos += Number(a.valor || 0);
+          {currentCostCenter === ALL ? (
+            /* RELATÓRIO CONSOLIDADO - TODOS OS CENTROS */
+            <div className="categories-grid">
+              <div style={{ marginBottom: 20, textAlign: "center" }}>
+                <h3>Relatório Consolidado - Todos os Centros de Custo</h3>
+                <p style={{ color: "#666" }}>
+                  Valores consolidados respeitando as categorias específicas de cada centro de custo
+                </p>
+              </div>
+              
+              {(() => {
+                // Consolida dados de todos os centros de custo
+                const consolidatedCategories = {};
+                
+                // Para cada centro de custo que tem dados
+                costCenters.forEach(cc => {
+                  const ccId = String(cc.idcentrocusto);
+                  const ccCategories = categoriesByCC[ccId] || {};
+                  
+                  Object.values(ccCategories).forEach(cat => {
+                    // Se categoria não existe no consolidado, cria
+                    if (!consolidatedCategories[cat.title]) {
+                      consolidatedCategories[cat.title] = {
+                        title: cat.title,
+                        receita: 0,
+                        custos: 0,
+                        centros: []
+                      };
+                    }
+                    
+                    // Calcula valores desta categoria neste centro
+                    let catRec = 0, catCustos = 0;
+                    
+                    (cat.agrupadorIds || []).forEach(aggId => {
+                      if (aggregators[aggId]) {
+                        const col = aggregators[aggId];
+                        const ids = col.id === "unassigned"
+                          ? Object.keys(accounts).filter(id => 
+                              Object.values(aggregators)
+                                .filter(a => a.id !== "unassigned")
+                                .every(a => !(a.accountIds || []).includes(id))
+                            )
+                          : (col.accountIds || []).filter(id => accounts[id]);
+                          
+                        ids.forEach(id => {
+                          const a = accounts[id];
+                          if (!a) return;
+                          if (a.sign === "+") catRec += Number(a.valor || 0);
+                          else catCustos += Number(a.valor || 0);
+                        });
+                      }
+                    });
+                    
+                    consolidatedCategories[cat.title].receita += catRec;
+                    consolidatedCategories[cat.title].custos += catCustos;
+                    
+                    if (catRec > 0 || catCustos > 0) {
+                      consolidatedCategories[cat.title].centros.push({
+                        nome: cc.nome,
+                        codigo: cc.codigo,
+                        receita: catRec,
+                        custos: catCustos
+                      });
+                    }
                   });
                 });
-
-                const saldo = catRec - catCustos;
-
-                return (
-                  <div className="category-card" key={`cat-${cat.id}`}>
-                    <div className="category-header">{cat.title}</div>
-
-                    <div className="category-body">
-                      <div className="row">
-                        <div className="label">RECEITA</div>
-                        <div className="value receita">{formatValue(catRec)}</div>
+                
+                return Object.values(consolidatedCategories).map(cat => {
+                  const saldo = cat.receita - cat.custos;
+                  
+                  return (
+                    <div className="category-card" key={`consolidated-${cat.title}`} style={{ position: "relative" }}>
+                      <div className="category-header">
+                        {cat.title}
+                        <small style={{ fontSize: "0.8em", opacity: 0.7, display: "block" }}>
+                          {cat.centros.length} centro(s) de custo
+                        </small>
                       </div>
 
-                      <div className="row">
-                        <div className="label">CUSTOS</div>
-                        <div className="value custos">{formatValue(-catCustos)}</div>
-                      </div>
+                      <div className="category-body">
+                        <div className="row">
+                          <div className="label">RECEITA</div>
+                          <div className="value receita">{formatValue(cat.receita)}</div>
+                        </div>
 
-                      <div className="row saldo-row">
-                        <div className="label">SALDO</div>
-                        <div className={`value saldo ${saldo < 0 ? "neg" : "pos"}`}>{formatValue(saldo)}</div>
+                        <div className="row">
+                          <div className="label">CUSTOS</div>
+                          <div className="value custos">{formatValue(-cat.custos)}</div>
+                        </div>
+
+                        <div className="row saldo-row">
+                          <div className="label">SALDO</div>
+                          <div className={`value saldo ${saldo < 0 ? "neg" : "pos"}`}>
+                            {formatValue(saldo)}
+                          </div>
+                        </div>
+                        
+                        {/* Detalhamento por centro */}
+                        <details style={{ marginTop: 12, fontSize: "0.85em" }}>
+                          <summary style={{ cursor: "pointer", color: "#666" }}>
+                            Ver detalhes por centro
+                          </summary>
+                          <div style={{ marginTop: 8, maxHeight: 150, overflow: "auto" }}>
+                            {cat.centros.map(centro => (
+                              <div key={centro.codigo || centro.nome} style={{ 
+                                padding: "4px 0", 
+                                borderBottom: "1px solid #eee",
+                                display: "flex",
+                                justifyContent: "space-between"
+                              }}>
+                                <span>{centro.codigo ? `${centro.codigo} - ` : ""}{centro.nome}</span>
+                                <span style={{ color: centro.receita - centro.custos >= 0 ? "green" : "red" }}>
+                                  {formatValue(centro.receita - centro.custos)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
                       </div>
                     </div>
-                  </div>
-                );
-              });
-            })()}
-          </div>
-
-          {/* Totalizador geral (opcional abaixo dos cards) */}
-          <div style={{ marginTop: 18 }}>
-            <div style={{ fontWeight: 700, textAlign: "right", color: "var(--accent)" }}>
-              {/* Calcula totais */ }
+                  );
+                });
+              })()}
+            </div>
+          ) : (
+            /* RELATÓRIO POR CENTRO ESPECÍFICO */
+            <div className="categories-grid">
               {(() => {
-                const cats = Object.values(categories || {});
-                let totalRec = 0, totalCustos = 0;
-                cats.forEach((cat) => {
+                const cats = Object.values(currentCategories || {});
+                return cats.map((cat) => {
                   const catAggIds = (cat.agrupadorIds || []).filter((aid) => aggregators[aid]);
+
+                  let catRec = 0;
+                  let catCustos = 0;
+
                   catAggIds.forEach((aggId) => {
                     const col = aggregators[aggId];
                     if (!col) return;
@@ -729,30 +956,137 @@ export default function App() {
                           Object.values(aggregators).filter((a) => a.id !== "unassigned").every((a) => !(a.accountIds || []).includes(id))
                         )
                       : (col.accountIds || []).filter((id) => accounts[id]);
+
                     ids.forEach((id) => {
                       const a = accounts[id];
                       if (!a) return;
-                      if (a.sign === "+") totalRec += Number(a.valor || 0);
-                      else totalCustos += Number(a.valor || 0);
+                      if (a.sign === "+") catRec += Number(a.valor || 0);
+                      else catCustos += Number(a.valor || 0);
                     });
                   });
+
+                  const saldo = catRec - catCustos;
+
+                  return (
+                    <div className="category-card" key={`cat-${cat.id}`}>
+                      <div className="category-header">{cat.title}</div>
+
+                      <div className="category-body">
+                        <div className="row">
+                          <div className="label">RECEITA</div>
+                          <div className="value receita">{formatValue(catRec)}</div>
+                        </div>
+
+                        <div className="row">
+                          <div className="label">CUSTOS</div>
+                          <div className="value custos">{formatValue(-catCustos)}</div>
+                        </div>
+
+                        <div className="row saldo-row">
+                          <div className="label">SALDO</div>
+                          <div className={`value saldo ${saldo < 0 ? "neg" : "pos"}`}>{formatValue(saldo)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
                 });
-                const totalSaldo = totalRec - totalCustos;
-                return (
-                  <div>
-                    Total Receita: {formatValue(totalRec)} &nbsp;&nbsp;|&nbsp;&nbsp;
-                    Total Custos: {formatValue(-totalCustos)} &nbsp;&nbsp;|&nbsp;&nbsp;
-                    Saldo: <span style={{ color: totalSaldo < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(totalSaldo)}</span>
-                  </div>
-                );
               })()}
             </div>
-          </div>
+          )}
+
+          {/* Totalizador geral consolidado */}
+          {currentCostCenter === ALL && (
+            <div style={{ marginTop: 18 }}>
+              <div style={{ fontWeight: 700, textAlign: "right", color: "var(--accent)" }}>
+                {(() => {
+                  let totalRec = 0, totalCustos = 0;
+                  
+                  // Soma todos os valores de todos os centros
+                  costCenters.forEach(cc => {
+                    const ccId = String(cc.idcentrocusto);
+                    const ccCategories = categoriesByCC[ccId] || {};
+                    
+                    Object.values(ccCategories).forEach(cat => {
+                      (cat.agrupadorIds || []).forEach(aggId => {
+                        if (aggregators[aggId]) {
+                          const col = aggregators[aggId];
+                          const ids = col.id === "unassigned"
+                            ? Object.keys(accounts).filter(id => 
+                                Object.values(aggregators)
+                                  .filter(a => a.id !== "unassigned")
+                                  .every(a => !(a.accountIds || []).includes(id))
+                              )
+                            : (col.accountIds || []).filter(id => accounts[id]);
+                            
+                          ids.forEach(id => {
+                            const a = accounts[id];
+                            if (!a) return;
+                            if (a.sign === "+") totalRec += Number(a.valor || 0);
+                            else totalCustos += Number(a.valor || 0);
+                          });
+                        }
+                      });
+                    });
+                  });
+                  
+                  const totalSaldo = totalRec - totalCustos;
+                  return (
+                    <div>
+                      <div style={{ fontSize: "0.9em", color: "#666", marginBottom: 4 }}>
+                        CONSOLIDADO - TODOS OS CENTROS:
+                      </div>
+                      Total Receita: {formatValue(totalRec)} &nbsp;&nbsp;|&nbsp;&nbsp;
+                      Total Custos: {formatValue(-totalCustos)} &nbsp;&nbsp;|&nbsp;&nbsp;
+                      Saldo: <span style={{ color: totalSaldo < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(totalSaldo)}</span>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+
+          {/* Totalizador por centro específico */}
+          {currentCostCenter !== ALL && (
+            <div style={{ marginTop: 18 }}>
+              <div style={{ fontWeight: 700, textAlign: "right", color: "var(--accent)" }}>
+                {(() => {
+                  const cats = Object.values(currentCategories || {});
+                  let totalRec = 0, totalCustos = 0;
+                  cats.forEach((cat) => {
+                    const catAggIds = (cat.agrupadorIds || []).filter((aid) => aggregators[aid]);
+                    catAggIds.forEach((aggId) => {
+                      const col = aggregators[aggId];
+                      if (!col) return;
+                      const ids = col.id === "unassigned"
+                        ? Object.keys(accounts).filter((id) =>
+                            Object.values(aggregators).filter((a) => a.id !== "unassigned").every((a) => !(a.accountIds || []).includes(id))
+                          )
+                        : (col.accountIds || []).filter((id) => accounts[id]);
+                      ids.forEach((id) => {
+                        const a = accounts[id];
+                        if (!a) return;
+                        if (a.sign === "+") totalRec += Number(a.valor || 0);
+                        else totalCustos += Number(a.valor || 0);
+                      });
+                    });
+                  });
+                  const totalSaldo = totalRec - totalCustos;
+                  return (
+                    <div>
+                      Total Receita: {formatValue(totalRec)} &nbsp;&nbsp;|&nbsp;&nbsp;
+                      Total Custos: {formatValue(-totalCustos)} &nbsp;&nbsp;|&nbsp;&nbsp;
+                      Saldo: <span style={{ color: totalSaldo < 0 ? "var(--danger)" : "var(--accent)" }}>{formatValue(totalSaldo)}</span>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* Agrupadores (drag & drop) */}
-      {activeView === "groups" && (
+      {activeView === "groups" && currentCostCenter !== ALL && (
         <DragDropContext onDragEnd={onDragEnd}>
           <div className="grid">
             {Object.values(aggregators).map((col) => {
@@ -822,8 +1156,14 @@ export default function App() {
         <div className="report-list-view">
           <h2>Gerenciamento de Categorias</h2>
           <p style={{ marginBottom: 16, color: "#666" }}>
-            Use esta seção para criar categorias e atribuir agrupadores a elas. 
-            As categorias organizam seus agrupadores em grupos maiores para melhor análise nos relatórios.
+            Use esta seção para criar categorias e atribuir agrupadores a elas por centro de custo.
+            {currentCostCenter === ALL 
+              ? " Selecione um centro de custo específico nos filtros para começar."
+              : ` Configurando centro: ${(() => {
+                  const cc = costCenters.find(c => String(c.idcentrocusto) === String(currentCostCenter));
+                  return cc ? `${cc.codigo ? cc.codigo + ' - ' : ''}${cc.nome}` : currentCostCenter;
+                })()}`
+            }
           </p>
           {loading && <p>Carregando...</p>}
         </div>

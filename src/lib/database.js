@@ -31,33 +31,48 @@ export const db = {
     const qs = new URLSearchParams();
     if (ano != null) qs.set('ano', ano);
     if (mes != null) qs.set('mes', mes);
-    if (cc  != null) qs.set('cc', cc);     // <- API espera 'centro'
-    if (empresa != null) qs.set('emp', empresa); // <- "1" | "7" | "all"
+    if (cc  != null) qs.set('cc', cc);     
+    if (empresa != null) qs.set('emp', empresa); 
     const url = qs.toString() ? `/api/movimentacoes?${qs}` : '/api/movimentacoes';
     return fetch(url).then(j);
   },
 
-  // getCategorias -> retorna array [{ idcategoria, nome }]
-  async getCategorias() {
-    const res = await fetch("/api/categorias");
+  // ATUALIZADO: getCategorias agora aceita centro de custo
+  async getCategorias(idcentrocusto = null) {
+    const qs = new URLSearchParams();
+    if (idcentrocusto != null) qs.set('cc', idcentrocusto);
+    const url = qs.toString() ? `/api/categorias?${qs}` : '/api/categorias';
+    
+    const res = await fetch(url);
     const json = await res.json();
     return Array.isArray(json.categorias) ? json.categorias : [];
   },
 
-  // getCategoriaAgrupadores -> retorna array [{ idcategoria, idagrupador }]
-  async getCategoriaAgrupadores() {
-    const res = await fetch("/api/categorias");
+  // ATUALIZADO: getCategoriaAgrupadores agora aceita centro de custo
+  async getCategoriaAgrupadores(idcentrocusto = null) {
+    const qs = new URLSearchParams();
+    if (idcentrocusto != null) qs.set('cc', idcentrocusto);
+    const url = qs.toString() ? `/api/categorias?${qs}` : '/api/categorias';
+    
+    const res = await fetch(url);
     const json = await res.json();
     return Array.isArray(json.links) ? json.links : [];
   },
 
-  // saveCategorias: envia o mapa de categorias (frontend) para backend
-  async saveCategorias(categoriesMap) {
+  // ATUALIZADO: saveCategorias agora aceita centro de custo
+  async saveCategorias(categoriesMap, idcentrocusto) {
+    if (!idcentrocusto) {
+      throw new Error("Centro de custo é obrigatório para salvar categorias");
+    }
+    
     // categoriesMap: objeto { id: { id, title, agrupadorIds: [] }, ... }
     const resp = await fetch("/api/categorias", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ categorias: categoriesMap }),
+      body: JSON.stringify({ 
+        categorias: categoriesMap,
+        idcentrocusto: idcentrocusto
+      }),
     });
     return resp.json();
   },
@@ -76,9 +91,13 @@ export const db = {
     }).then(j);
   },
 
-  // ---------------- Agrupadores (globais) ----------------
-  getAgrupadores() {
-    return fetch('/api/agrupadores').then(j);
+  // ---------------- Agrupadores ----------------
+  // ATUALIZADO: getAgrupadores agora aceita centro de custo
+  getAgrupadores(idcentrocusto = null) {
+    const qs = new URLSearchParams();
+    if (idcentrocusto != null) qs.set('cc', idcentrocusto);
+    const url = qs.toString() ? `/api/agrupadores?${qs}` : '/api/agrupadores';
+    return fetch(url).then(j);
   },
 
   createAgrupador(nome) {
@@ -98,23 +117,26 @@ export const db = {
   },
 
   /**
-   * Mapeamento global Conta→Agrupador (sem mês/ano/empresa).
-   * Retorna algo como [{ idconta, idagrupador }, ...]
+   * ATUALIZADO: Mapeamento Conta→Agrupador por centro de custo
+   * Retorna algo como [{ idconta, idagrupador, idcentrocusto }, ...]
    */
-  getAgrupadorContas() {
-    return fetch('/api/agrupadores/contas').then(j);
+  getAgrupadorContas(idcentrocusto = null) {
+    const qs = new URLSearchParams();
+    if (idcentrocusto != null) qs.set('cc', idcentrocusto);
+    const url = qs.toString() ? `/api/agrupadores/contas?${qs}` : '/api/agrupadores/contas';
+    return fetch(url).then(j);
   },
 
   /**
-   * Salva TODO o mapeamento atual (substitui o que existe no server).
-   * associations: [{ idconta: string, idagrupador: number|null }, ...]
-   * - idagrupador null => remove vínculo (vai para "Sem agrupador")
+   * ATUALIZADO: Salva mapeamento por centro de custo
+   * associations: [{ idconta: string, idagrupador: number|null, idcentrocusto: number }, ...]
    */
   saveAgrupadorContas(associations) {
     const payload = {
       associations: associations.map((a) => ({
         idconta: String(a.idconta),
         idagrupador: a.idagrupador == null ? null : Number(a.idagrupador),
+        idcentrocusto: a.idcentrocusto ? Number(a.idcentrocusto) : null,
       })),
     };
     return fetch('/api/agrupadores/contas', {
