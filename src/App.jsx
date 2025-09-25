@@ -1,4 +1,4 @@
-// App.jsx - Versão com estrutura por Centro de Custo
+// App.jsx - VERSÃO FINAL COMPLETA: Categorias globais + mapeamentos por centro de custo
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
@@ -10,13 +10,10 @@ import { db } from "./lib/database";
 import "./App.css";
 
 /**
- * App.jsx - NOVA VERSÃO: estrutura por Centro de Custo
- * 
- * PRINCIPAIS MUDANÇAS:
- * - Cada centro de custo tem suas próprias categorias/agrupadores
- * - A mesma conta pode estar em categorias diferentes por centro
- * - localStorage e DB agora armazenam por centro de custo
- * - Interface mostra apenas dados do centro selecionado
+ * ESTRUTURA FINAL:
+ * - CATEGORIAS: globais (mesmas para todos os centros)
+ * - MAPEAMENTO agrupador→categoria: POR centro de custo
+ * - MAPEAMENTO conta→agrupador: POR centro de custo
  */
 
 /* ===== Constantes ===== */
@@ -35,13 +32,17 @@ const TABS = [
 const ALL = "all";
 const LS_COMPANY = "dfc-laosf:company";
 const LS_FILTERS = "dfc-laosf:filters";
-const LS_CATEGORIES_BY_CC = "dfc-laosf:categories-by-cc"; // NOVO: por centro de custo
 
-/* Categorias padrão por centro de custo */
-const DEFAULT_CATEGORIES_BY_CC = {
-  // Cada centro de custo tem suas próprias categorias
-  // Formato: { [centroId]: { [catId]: { id, title, agrupadorIds } } }
-};
+// CATEGORIAS PADRÃO GLOBAIS
+const DEFAULT_GLOBAL_CATEGORIES = [
+  "GRANJA DONA CLARA I",
+  "GRANJA DONA CLARA II", 
+  "AGRICULTURA",
+  "APOIO",
+  "DIRETORIA",
+  "APICULTURA, AVICULTURA, BOVINOCULTURA E PISCICULTURA",
+  "Sem categoria"
+];
 
 const MONTHS_PT = [
   "janeiro","fevereiro","março","abril","maio","junho",
@@ -54,25 +55,6 @@ const readSavedFilters = () => {
     return raw ? JSON.parse(raw) : null; 
   } catch { 
     return null; 
-  }
-};
-
-// NOVA FUNÇÃO: Lê categorias por centro de custo do localStorage
-const readCategoriesByCC = () => {
-  try {
-    const raw = localStorage.getItem(LS_CATEGORIES_BY_CC);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-};
-
-// NOVA FUNÇÃO: Salva categorias por centro de custo no localStorage  
-const saveCategoriesByCC = (categoriesByCC) => {
-  try {
-    localStorage.setItem(LS_CATEGORIES_BY_CC, JSON.stringify(categoriesByCC));
-  } catch (e) {
-    console.warn("Erro ao salvar categorias por CC:", e);
   }
 };
 
@@ -100,15 +82,44 @@ export default function App() {
   });
   const [accounts, setAccounts] = useState({});
 
-  /* NOVA ESTRUTURA: Categorias por centro de custo */
-  const [categoriesByCC, setCategoriesByCC] = useState(readCategoriesByCC);
+  /* NOVA ESTRUTURA: Categorias globais */
+  const [globalCategories, setGlobalCategories] = useState([]); // [{ idcategoria, nome }, ...]
+  const [categoryMappings, setCategoryMappings] = useState([]); // [{ idcategoria, idagrupador, idcentrocusto }, ...]
   
-  // Categorias do centro de custo atual (para compatibilidade com AggregatorConfig)
-  const currentCategories = currentCostCenter === ALL 
-    ? { uncategorized: { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] } }
-    : (categoriesByCC[currentCostCenter] || { uncategorized: { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] } });
+  // Para compatibilidade com AggregatorConfig, montamos o formato antigo
+  const currentCategories = React.useMemo(() => {
+    if (currentCostCenter === ALL) {
+      return { uncategorized: { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] } };
+    }
+
+    const categories = {};
+    
+    // Cria entrada para cada categoria global
+    globalCategories.forEach(cat => {
+      categories[cat.idcategoria] = {
+        id: cat.idcategoria,
+        title: cat.nome,
+        agrupadorIds: []
+      };
+    });
+
+    // Adiciona agrupadores baseado no mapeamento do centro atual
+    categoryMappings.forEach(mapping => {
+      if (Number(mapping.idcentrocusto) === Number(currentCostCenter) && categories[mapping.idcategoria]) {
+        categories[mapping.idcategoria].agrupadorIds.push(String(mapping.idagrupador));
+      }
+    });
+
+    // Garante categoria "Sem categoria"
+    if (!categories.uncategorized) {
+      categories.uncategorized = { id: "uncategorized", title: "Sem categoria", agrupadorIds: [] };
+    }
+
+    return categories;
+  }, [globalCategories, categoryMappings, currentCostCenter]);
 
   const [loading, setLoading] = useState(false);
+  const [importProgress, setImportProgress] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [unit, setUnit] = useState("reais");
   const [currentPrices, setCurrentPrices] = useState({});
@@ -171,7 +182,7 @@ export default function App() {
     return null;
   };
 
-  /* ===== NOVA FUNÇÃO: Load data por centro de custo ===== */
+  /* ===== NOVA FUNÇÃO: Load data com categorias globais ===== */
   const loadMonthData = useCallback(async () => {
     try {
       setLoading(true);
@@ -196,7 +207,7 @@ export default function App() {
         }; 
       });
 
-      // 3) Movimentações (filtros) - IMPORTANTE: só do centro selecionado se não for ALL
+      // 3) Movimentações (filtros)
       const monthParam = reportFilters.month === ALL ? null : Number(reportFilters.month);
       const yearParam = reportFilters.year == null ? Number(currentYear) : Number(reportFilters.year);
       const centroParam = (!reportFilters.costCenter || reportFilters.costCenter === ALL) 
@@ -233,29 +244,27 @@ export default function App() {
         contasMap[m.idconta].sign = novo >= 0 ? "+" : "-";
       });
 
-      // 5) NOVA LÓGICA: Agrupadores por centro de custo
-      let gruposMap = { 
+      // 5) Agrupadores (globais)
+      const grupos = await db.getAgrupadores();
+      const gruposMap = { 
         unassigned: { 
           id: "unassigned", 
           title: "Sem agrupador", 
           accountIds: [] 
         } 
       };
+      grupos.forEach((g) => { 
+        gruposMap[String(g.idagrupador)] = { 
+          id: String(g.idagrupador), 
+          title: g.nome, 
+          accountIds: [] 
+        }; 
+      });
 
+      // 6) Associações conta→agrupador por centro
       if (centroParam) {
-        // Se tem centro específico, busca agrupadores deste centro
         try {
-          const grupos = await db.getAgrupadores(); // Você pode modificar para filtrar por centro
-          grupos.forEach((g) => { 
-            gruposMap[String(g.idagrupador)] = { 
-              id: String(g.idagrupador), 
-              title: g.nome, 
-              accountIds: [] 
-            }; 
-          });
-
-          // Ligações conta->agrupador (filtradas por centro se possível)
-          const liga = await db.getAgrupadorContas(); // Você pode modificar para filtrar por centro
+          const liga = await db.getAgrupadorContas(centroParam);
           liga.forEach((a) => {
             const gid = String(a.idagrupador);
             if (gruposMap[gid] && contasMap[a.idconta]) {
@@ -263,7 +272,7 @@ export default function App() {
             }
           });
         } catch (e) {
-          console.warn("Erro ao carregar agrupadores:", e);
+          console.warn("Erro ao carregar associações conta→agrupador:", e);
         }
       }
 
@@ -275,81 +284,34 @@ export default function App() {
       );
       gruposMap.unassigned.accountIds = Object.keys(contasMap).filter((id) => !assigned.has(id));
 
-      // 6) NOVA LÓGICA: Categorias por centro de custo
-      let currentCategoriesMap = { 
-        uncategorized: { 
-          id: "uncategorized", 
-          title: "Sem categoria", 
-          agrupadorIds: [] 
-        } 
-      };
-
-      if (centroParam) {
-        // Tenta carregar do banco para este centro específico
-        try {
-          // Você precisaria modificar estas funções para aceitar centro de custo
-          const dbCats = typeof db.getCategorias === "function" 
-            ? await db.getCategorias(centroParam) 
-            : null;
-          const dbLinks = typeof db.getCategoriaAgrupadores === "function" 
-            ? await db.getCategoriaAgrupadores(centroParam) 
-            : null;
-
-          if (Array.isArray(dbCats) && dbCats.length) {
-            currentCategoriesMap = {};
-            dbCats.forEach((c) => {
-              currentCategoriesMap[String(c.idcategoria)] = { 
-                id: String(c.idcategoria), 
-                title: c.nome, 
-                agrupadorIds: [] 
-              };
-            });
-            
-            if (Array.isArray(dbLinks)) {
-              dbLinks.forEach((l) => {
-                const cid = String(l.idcategoria);
-                const gid = String(l.idagrupador);
-                if (currentCategoriesMap[cid] && gruposMap[gid]) {
-                  currentCategoriesMap[cid].agrupadorIds.push(gid);
-                }
-              });
-            }
-          } else {
-            // Fallback: localStorage por centro
-            const categoriesByCC = readCategoriesByCC();
-            currentCategoriesMap = categoriesByCC[String(centroParam)] || currentCategoriesMap;
-          }
-        } catch (e) {
-          console.warn("Erro ao carregar categorias por centro:", e);
-          // Fallback: localStorage
-          const categoriesByCC = readCategoriesByCC();
-          currentCategoriesMap = categoriesByCC[String(centroParam)] || currentCategoriesMap;
-        }
-
-        // Atualiza o estado global das categorias por centro
-        setCategoriesByCC(prev => ({
-          ...prev,
-          [String(centroParam)]: currentCategoriesMap
-        }));
+      // 7) CATEGORIAS GLOBAIS
+      try {
+        const cats = await db.getCategorias();
+        setGlobalCategories(Array.isArray(cats) ? cats : []);
+      } catch (e) {
+        console.warn("Erro ao carregar categorias globais:", e);
+        setGlobalCategories([]);
       }
 
-      // Garante que todo agrupador esteja em alguma categoria
-      const allGroupIds = Object.keys(gruposMap).filter((id) => id !== "unassigned");
-      const assignedGroupIds = new Set(
-        Object.values(currentCategoriesMap).flatMap((c) => c.agrupadorIds || [])
-      );
-      
-      currentCategoriesMap.uncategorized = currentCategoriesMap.uncategorized || { 
-        id: "uncategorized", 
-        title: "Sem categoria", 
-        agrupadorIds: [] 
-      };
-      currentCategoriesMap.uncategorized.agrupadorIds = Array.from(
-        new Set([
-          ...(currentCategoriesMap.uncategorized.agrupadorIds || []), 
-          ...allGroupIds.filter((g) => !assignedGroupIds.has(g))
-        ])
-      );
+      // 8) MAPEAMENTOS categoria←→agrupador por centro  
+      if (centroParam) {
+        try {
+          const mappings = await db.getCategoriaAgrupadores(centroParam);
+          setCategoryMappings(Array.isArray(mappings) ? mappings : []);
+        } catch (e) {
+          console.warn("Erro ao carregar mapeamentos categoria←→agrupador:", e);
+          setCategoryMappings([]);
+        }
+      } else {
+        // Para relatórios consolidados, carrega todos os mapeamentos
+        try {
+          const allMappings = await db.getCategoriaAgrupadores();
+          setCategoryMappings(Array.isArray(allMappings) ? allMappings : []);
+        } catch (e) {
+          console.warn("Erro ao carregar todos os mapeamentos:", e);
+          setCategoryMappings([]);
+        }
+      }
 
       // Atualiza estados
       setAccounts(contasMap);
@@ -381,7 +343,7 @@ export default function App() {
     }));
   }, [reportFilters.month, reportFilters.year, reportFilters.costCenter, companyFilter]);
 
-  /* ===== NOVA FUNÇÃO: Salvar categorias por centro de custo ===== */
+  /* ===== NOVA FUNÇÃO: Salvar categorias (mapeamento) ===== */
   const handleSaveCategories = async (newCats) => {
     if (currentCostCenter === ALL) {
       alert("Selecione um centro de custo específico para gerenciar categorias.");
@@ -391,23 +353,27 @@ export default function App() {
     try {
       setLoading(true);
       
-      // Atualiza estrutura por centro de custo
-      const newCategoriesByCC = {
-        ...categoriesByCC,
-        [String(currentCostCenter)]: newCats
-      };
-      
-      setCategoriesByCC(newCategoriesByCC);
-      saveCategoriesByCC(newCategoriesByCC);
+      // Converte formato do AggregatorConfig para novo formato
+      const mapeamentos = [];
+      Object.values(newCats).forEach(cat => {
+        if (cat.agrupadorIds && Array.isArray(cat.agrupadorIds)) {
+          cat.agrupadorIds.forEach(aggId => {
+            // Encontra ID da categoria pelo nome
+            const globalCat = globalCategories.find(gc => gc.nome === cat.title);
+            if (globalCat && aggId) {
+              mapeamentos.push({
+                idcategoria: globalCat.idcategoria,
+                idagrupador: Number(aggId)
+              });
+            }
+          });
+        }
+      });
 
-      // Tenta salvar no banco (você precisaria modificar esta função)
-      if (typeof db.saveCategorias === "function") {
-        await db.saveCategorias(newCats, Number(currentCostCenter)); // Passa o centro de custo
-        await loadMonthData();
-        alert("Categorias salvas no banco para este centro de custo.");
-      } else {
-        alert("Categorias salvas localmente para este centro de custo.");
-      }
+      // Salva mapeamento no backend
+      await db.saveCategorias(newCats, Number(currentCostCenter));
+      await loadMonthData();
+      alert("Categorias salvas para este centro de custo.");
     } catch (e) {
       console.error("Erro ao salvar categorias:", e);
       alert("Falha ao salvar categorias: " + (e?.message || e));
@@ -416,7 +382,7 @@ export default function App() {
     }
   };
 
-  /* ===== NOVA FUNÇÃO: Salvar agrupadores por centro de custo ===== */
+  /* ===== Salvar agrupadores por centro de custo ===== */
   const handleSaveGroups = async () => {
     if (currentCostCenter === ALL) {
       alert("Selecione um centro de custo específico para gerenciar agrupadores.");
@@ -431,7 +397,7 @@ export default function App() {
           associations.push({ 
             idconta: String(accountId), 
             idagrupador: Number(agg.id),
-            idcentrocusto: Number(currentCostCenter) // NOVO: associa ao centro atual
+            idcentrocusto: Number(currentCostCenter) 
           });
         });
       });
@@ -445,7 +411,6 @@ export default function App() {
           idcentrocusto: Number(currentCostCenter) 
         }));
 
-      // Você precisaria modificar esta função para aceitar centro de custo
       await db.saveAgrupadorContas([...associations, ...unassignedItems]);
       alert(`Mapeamento de contas salvo para centro de custo ${currentCostCenter}.`);
       loadMonthData().catch(() => {});
@@ -483,26 +448,38 @@ export default function App() {
     }));
   };
 
+  /* ===== NOVA FUNÇÃO DE IMPORTAÇÃO COM LAYOUT MELHORADO ===== */
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    
     if (!selectedMonth || !selectedYear) {
-      alert("Selecione o mês e ano antes de importar o arquivo.");
+      alert("Selecione o período (mês e ano) antes de importar o arquivo.");
       return;
     }
+    
     setLoading(true);
+    setImportProgress("Lendo arquivo...");
 
     try {
       const data = await file.arrayBuffer();
       const wb = XLSX.read(data, { type: "array" });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
-      if (!rows.length) return alert("Planilha vazia.");
+      
+      if (!rows.length) {
+        alert("Arquivo está vazio ou não contém dados válidos.");
+        return;
+      }
 
-      // 1) CC (opcional)
+      setImportProgress("Analisando estrutura...");
+
+      // 1) Extrair centro de custo
       const centro = extractCostCenter(rows);
       let idCC = null;
+      
       if (centro) {
+        setImportProgress("Registrando centro de custo...");
         try {
           const savedCC = await db.upsertCentroCusto?.({ codigo: centro.id, nome: centro.nome });
           idCC = savedCC?.idcentrocusto ?? null;
@@ -511,7 +488,9 @@ export default function App() {
         }
       }
 
-      // 2) Cabeçalho
+      setImportProgress("Localizando cabeçalhos...");
+
+      // 2) Encontrar cabeçalho
       let headerIdx = -1;
       for (let i = 0; i < Math.min(rows.length, 60); i++) {
         const r = rows[i].map(norm);
@@ -524,18 +503,29 @@ export default function App() {
           break; 
         }
       }
-      if (headerIdx === -1) return alert("Não encontrei cabeçalhos (Código/Descrição/Débito/Crédito).");
+      
+      if (headerIdx === -1) {
+        alert("Não foi possível encontrar os cabeçalhos necessários (Código, Descrição, Débito, Crédito) no arquivo.");
+        return;
+      }
 
       const header = rows[headerIdx];
       const colCodigo = findCol(header, ["código","codigo"]);
       const colDescricao = findCol(header, ["descrição","descricao"]);
       const colDeb = findCol(header, ["débito","debito"]);
       const colCred = findCol(header, ["crédito","credito"]);
-      if (colDeb === -1 || colCred === -1) return alert("Colunas de Débito/Crédito não encontradas.");
+      
+      if (colDeb === -1 || colCred === -1) {
+        alert("Colunas de Débito e/ou Crédito não encontradas no arquivo.");
+        return;
+      }
 
-      // 3) Lote de movimentações
+      setImportProgress("Processando contas...");
+
+      // 3) Processar dados
       const newAccounts = {};
       const movimentacoes = [];
+      let processedCount = 0;
 
       for (let r = headerIdx + 1; r < rows.length; r++) {
         const row = rows[r];
@@ -547,8 +537,9 @@ export default function App() {
         const id = codigoRaw;
         const descricaoPlanilha = colDescricao !== -1 ? String(row[colDescricao] || "").trim() : "";
 
-        const deb = parseBRNumber(row[colCred]);
-        const cred = parseBRNumber(row[colDeb]);
+        const deb = parseBRNumber(row[colCred]); // Inversão proposital
+        const cred = parseBRNumber(row[colDeb]); // Inversão proposital
+        
         if (deb === 0 && cred === 0) continue;
 
         movimentacoes.push({
@@ -570,43 +561,130 @@ export default function App() {
           valor: Math.abs(val),
           sign: val >= 0 ? "+" : "-",
         };
+        
+        processedCount++;
       }
 
-      // 4) Grava no banco
+      if (processedCount === 0) {
+        alert("Nenhuma conta válida encontrada no arquivo.");
+        return;
+      }
+
+      setImportProgress("Salvando no banco de dados...");
+
+      // 4) Salvar no banco
       await db.saveMovimentacoes(movimentacoes, selectedMonth, selectedYear, company);
 
-      // 5) UI rápida
+      setImportProgress("Atualizando interface...");
+
+      // 5) Atualizar UI
       setAccounts(newAccounts);
       setAggregators({
         unassigned: { id: "unassigned", title: "Sem agrupador", accountIds: Object.keys(newAccounts) },
       });
 
-      // 6) Alinhar filtros
+      // 6) Ajustar filtros
       setCurrentMonth(selectedMonth);
       setCurrentYear(selectedYear);
       setReportFilters((p) => ({ ...p, month: selectedMonth, year: selectedYear }));
+      
       if (idCC) {
         setCurrentCostCenter(String(idCC));
         setReportFilters((p) => ({ ...p, costCenter: String(idCC) }));
       }
 
-      alert(
-        `Importadas ${Object.keys(newAccounts).length} contas para ${selectedMonth}/${selectedYear}` +
-        `${centro ? ` (CC: ${centro.id ? centro.id + " - " : ""}${centro.nome})` : ""}` +
-        ` (Empresa: ${company}).`
-      );
+      const successMessage = `✅ Importação concluída com sucesso!
+
+📊 ${processedCount} contas processadas
+📅 Período: ${selectedMonth}/${selectedYear}
+🏢 Empresa: ${company}${centro ? `
+🏭 Centro de Custo: ${centro.id ? centro.id + " - " : ""}${centro.nome}` : ""}
+
+Os dados foram salvos e você pode configurar os agrupadores na aba "Agrupadores".`;
+
+      alert(successMessage);
       setActiveView("reports");
+      
     } catch (err) {
       console.error("Erro ao importar:", err);
-      alert("Erro ao importar dados: " + err.message);
+      alert(`Erro durante a importação: ${err.message}
+      
+Verifique se o arquivo está no formato correto e tente novamente.`);
     } finally {
       setLoading(false);
+      setImportProgress(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
   const formatValue = (value) =>
     `R$ ${Number(value || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
+
+  /* ===== Função auxiliar para relatórios consolidados ===== */
+  const getConsolidatedData = () => {
+    const consolidatedCategories = {};
+    
+    // Para cada centro de custo
+    costCenters.forEach(cc => {
+      const ccId = Number(cc.idcentrocusto);
+      
+      // Busca mapeamentos deste centro
+      const ccMappings = categoryMappings.filter(m => Number(m.idcentrocusto) === ccId);
+      
+      ccMappings.forEach(mapping => {
+        const globalCat = globalCategories.find(gc => gc.idcategoria === mapping.idcategoria);
+        if (!globalCat) return;
+        
+        const catTitle = globalCat.nome;
+        
+        // Se categoria não existe no consolidado, cria
+        if (!consolidatedCategories[catTitle]) {
+          consolidatedCategories[catTitle] = {
+            title: catTitle,
+            receita: 0,
+            custos: 0,
+            centros: []
+          };
+        }
+        
+        // Calcula valores desta categoria neste centro
+        let catRec = 0, catCustos = 0;
+        const aggId = String(mapping.idagrupador);
+        
+        if (aggregators[aggId]) {
+          const col = aggregators[aggId];
+          const ids = col.id === "unassigned"
+            ? Object.keys(accounts).filter(id => 
+                Object.values(aggregators)
+                  .filter(a => a.id !== "unassigned")
+                  .every(a => !(a.accountIds || []).includes(id))
+              )
+            : (col.accountIds || []).filter(id => accounts[id]);
+            
+          ids.forEach(id => {
+            const a = accounts[id];
+            if (!a) return;
+            if (a.sign === "+") catRec += Number(a.valor || 0);
+            else catCustos += Number(a.valor || 0);
+          });
+        }
+        
+        consolidatedCategories[catTitle].receita += catRec;
+        consolidatedCategories[catTitle].custos += catCustos;
+        
+        if (catRec > 0 || catCustos > 0) {
+          consolidatedCategories[catTitle].centros.push({
+            nome: cc.nome,
+            codigo: cc.codigo,
+            receita: catRec,
+            custos: catCustos
+          });
+        }
+      });
+    });
+    
+    return Object.values(consolidatedCategories);
+  };
 
   /* ===== Render ===== */
   return (
@@ -669,7 +747,6 @@ export default function App() {
               .map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
 
-          {/* AVISO: Centro de custo agora é obrigatório para configurar */}
           <label className="label" style={{ marginTop: 8 }}>Centro de Custo</label>
           <select
             value={String(reportFilters.costCenter)}
@@ -720,23 +797,95 @@ export default function App() {
             />
           )}
 
+          {/* NOVA INTERFACE DE IMPORTAÇÃO MELHORADA */}
           {activeView === "import" && (
             <>
               <hr className="sidebar-sep" />
-              <MonthYearSelector
-                selectedMonth={selectedMonth}
-                selectedYear={selectedYear}
-                onMonthChange={setSelectedMonth}
-                onYearChange={setSelectedYear}
-                label="Período para Importação"
-              />
-              <div className="file-upload">
-                <h3>Importar Balancete</h3>
-                <p>Período: {selectedMonth}/{selectedYear} — Empresa: {company}</p>
-                <input ref={fileInputRef} type="file" accept=".xls,.xlsx" onChange={handleFile} />
-                {loading && <span>Carregando...</span>}
+              <div className="import-section">
+                <h3>📊 Importar Balancete</h3>
+                
+                {/* Seleção de período */}
+                <div className="import-step">
+                  <h4>1. Selecione o Período</h4>
+                  <div className="period-selector">
+                    <MonthYearSelector
+                      selectedMonth={selectedMonth}
+                      selectedYear={selectedYear}
+                      onMonthChange={setSelectedMonth}
+                      onYearChange={setSelectedYear}
+                      label="Período dos dados"
+                    />
+                  </div>
+                </div>
+
+                {/* Seleção de arquivo */}
+                <div className="import-step">
+                  <h4>2. Selecione o Arquivo</h4>
+                  <div className="file-drop-zone" 
+                       onClick={() => fileInputRef.current?.click()}
+                       style={{
+                         border: "2px dashed #ccc",
+                         borderRadius: 8,
+                         padding: 20,
+                         textAlign: "center",
+                         cursor: "pointer",
+                         backgroundColor: loading ? "#f8f8f8" : "#fafafa",
+                         transition: "all 0.2s"
+                       }}
+                       onMouseOver={(e) => {
+                         if (!loading) e.target.style.borderColor = "#007bff";
+                       }}
+                       onMouseOut={(e) => {
+                         e.target.style.borderColor = "#ccc";
+                       }}>
+                    <div style={{ fontSize: "2em", marginBottom: 8 }}>📁</div>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                      {loading ? "Processando..." : "Clique para selecionar arquivo"}
+                    </div>
+                    <div style={{ fontSize: "0.9em", color: "#666" }}>
+                      Formatos aceitos: .xls, .xlsx
+                    </div>
+                    {importProgress && (
+                      <div style={{ marginTop: 12, color: "#007bff", fontWeight: 500 }}>
+                        {importProgress}
+                      </div>
+                    )}
+                  </div>
+                  <input 
+                    ref={fileInputRef} 
+                    type="file" 
+                    accept=".xls,.xlsx" 
+                    onChange={handleFile}
+                    style={{ display: "none" }}
+                    disabled={loading}
+                  />
+                </div>
+
+                {/* Informações do que será importado */}
+                <div className="import-info" style={{
+                  backgroundColor: "#e3f2fd",
+                  border: "1px solid #bbdefb",
+                  borderRadius: 8,
+                  padding: 12,
+                  marginTop: 16,
+                  fontSize: "0.9em"
+                }}>
+                  <div style={{ fontWeight: 600, marginBottom: 8 }}>ℹ️ Informações da Importação:</div>
+                  <div>📅 <strong>Período:</strong> {selectedMonth}/{selectedYear}</div>
+                  <div>🏢 <strong>Empresa:</strong> {COMPANIES.find(c => c.id === company)?.name}</div>
+                  <div style={{ marginTop: 8, fontSize: "0.8em", color: "#666" }}>
+                    • O centro de custo será detectado automaticamente do arquivo<br/>
+                    • Colunas esperadas: Código, Descrição, Débito, Crédito<br/>
+                    • Contas importadas aparecerão em "Sem agrupador"
+                  </div>
+                </div>
+
+                {/* Dados históricos */}
+                <div className="import-step">
+                  <h4>3. Gerenciar Dados</h4>
+                  <DataManager onDataChange={loadMonthData} />
+                </div>
               </div>
-              <DataManager onDataChange={loadMonthData} />
             </>
           )}
 
@@ -744,32 +893,18 @@ export default function App() {
             <>
               <hr className="sidebar-sep" />
               
-              {/* NOVO AVISO: Centro de custo obrigatório */}
               {currentCostCenter === ALL ? (
-                <div style={{ 
-                  padding: 12, 
-                  backgroundColor: "#fff3cd", 
-                  border: "1px solid #ffeaa7", 
-                  borderRadius: 4,
-                  marginBottom: 12,
-                  color: "#856404"
-                }}>
-                  <strong>⚠️ Selecione um Centro de Custo específico</strong>
-                  <br />
-                  Para configurar agrupadores e categorias, você precisa escolher um centro de custo específico acima.
-                  Cada centro tem sua própria estrutura organizacional.
+                <div className="warning-box">
+                  <div style={{ fontSize: "1.2em", marginBottom: 8 }}>⚠️</div>
+                  <strong>Selecione um Centro de Custo específico</strong>
+                  <div style={{ marginTop: 8, fontSize: "0.9em" }}>
+                    Para configurar agrupadores e categorias, você precisa escolher um centro de custo específico acima.
+                    Cada centro tem sua própria estrutura organizacional.
+                  </div>
                 </div>
               ) : (
                 <>
-                  <div style={{ 
-                    padding: 8, 
-                    backgroundColor: "#d4edda", 
-                    border: "1px solid #c3e6cb",
-                    borderRadius: 4,
-                    marginBottom: 12,
-                    color: "#155724",
-                    fontSize: 14
-                  }}>
+                  <div className="info-box">
                     <strong>📋 Configurando:</strong> {
                       (() => {
                         const cc = costCenters.find(c => String(c.idcentrocusto) === String(currentCostCenter));
@@ -823,119 +958,61 @@ export default function App() {
                 </p>
               </div>
               
-              {(() => {
-                // Consolida dados de todos os centros de custo
-                const consolidatedCategories = {};
+              {getConsolidatedData().map(cat => {
+                const saldo = cat.receita - cat.custos;
                 
-                // Para cada centro de custo que tem dados
-                costCenters.forEach(cc => {
-                  const ccId = String(cc.idcentrocusto);
-                  const ccCategories = categoriesByCC[ccId] || {};
-                  
-                  Object.values(ccCategories).forEach(cat => {
-                    // Se categoria não existe no consolidado, cria
-                    if (!consolidatedCategories[cat.title]) {
-                      consolidatedCategories[cat.title] = {
-                        title: cat.title,
-                        receita: 0,
-                        custos: 0,
-                        centros: []
-                      };
-                    }
-                    
-                    // Calcula valores desta categoria neste centro
-                    let catRec = 0, catCustos = 0;
-                    
-                    (cat.agrupadorIds || []).forEach(aggId => {
-                      if (aggregators[aggId]) {
-                        const col = aggregators[aggId];
-                        const ids = col.id === "unassigned"
-                          ? Object.keys(accounts).filter(id => 
-                              Object.values(aggregators)
-                                .filter(a => a.id !== "unassigned")
-                                .every(a => !(a.accountIds || []).includes(id))
-                            )
-                          : (col.accountIds || []).filter(id => accounts[id]);
-                          
-                        ids.forEach(id => {
-                          const a = accounts[id];
-                          if (!a) return;
-                          if (a.sign === "+") catRec += Number(a.valor || 0);
-                          else catCustos += Number(a.valor || 0);
-                        });
-                      }
-                    });
-                    
-                    consolidatedCategories[cat.title].receita += catRec;
-                    consolidatedCategories[cat.title].custos += catCustos;
-                    
-                    if (catRec > 0 || catCustos > 0) {
-                      consolidatedCategories[cat.title].centros.push({
-                        nome: cc.nome,
-                        codigo: cc.codigo,
-                        receita: catRec,
-                        custos: catCustos
-                      });
-                    }
-                  });
-                });
-                
-                return Object.values(consolidatedCategories).map(cat => {
-                  const saldo = cat.receita - cat.custos;
-                  
-                  return (
-                    <div className="category-card" key={`consolidated-${cat.title}`} style={{ position: "relative" }}>
-                      <div className="category-header">
-                        {cat.title}
-                        <small style={{ fontSize: "0.8em", opacity: 0.7, display: "block" }}>
-                          {cat.centros.length} centro(s) de custo
-                        </small>
-                      </div>
-
-                      <div className="category-body">
-                        <div className="row">
-                          <div className="label">RECEITA</div>
-                          <div className="value receita">{formatValue(cat.receita)}</div>
-                        </div>
-
-                        <div className="row">
-                          <div className="label">CUSTOS</div>
-                          <div className="value custos">{formatValue(-cat.custos)}</div>
-                        </div>
-
-                        <div className="row saldo-row">
-                          <div className="label">SALDO</div>
-                          <div className={`value saldo ${saldo < 0 ? "neg" : "pos"}`}>
-                            {formatValue(saldo)}
-                          </div>
-                        </div>
-                        
-                        {/* Detalhamento por centro */}
-                        <details style={{ marginTop: 12, fontSize: "0.85em" }}>
-                          <summary style={{ cursor: "pointer", color: "#666" }}>
-                            Ver detalhes por centro
-                          </summary>
-                          <div style={{ marginTop: 8, maxHeight: 150, overflow: "auto" }}>
-                            {cat.centros.map(centro => (
-                              <div key={centro.codigo || centro.nome} style={{ 
-                                padding: "4px 0", 
-                                borderBottom: "1px solid #eee",
-                                display: "flex",
-                                justifyContent: "space-between"
-                              }}>
-                                <span>{centro.codigo ? `${centro.codigo} - ` : ""}{centro.nome}</span>
-                                <span style={{ color: centro.receita - centro.custos >= 0 ? "green" : "red" }}>
-                                  {formatValue(centro.receita - centro.custos)}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-                      </div>
+                return (
+                  <div className="category-card" key={`consolidated-${cat.title}`}>
+                    <div className="category-header">
+                      {cat.title}
+                      <small style={{ fontSize: "0.8em", opacity: 0.7, display: "block" }}>
+                        {cat.centros.length} centro(s) de custo
+                      </small>
                     </div>
-                  );
-                });
-              })()}
+
+                    <div className="category-body">
+                      <div className="row">
+                        <div className="label">RECEITA</div>
+                        <div className="value receita">{formatValue(cat.receita)}</div>
+                      </div>
+
+                      <div className="row">
+                        <div className="label">CUSTOS</div>
+                        <div className="value custos">{formatValue(-cat.custos)}</div>
+                      </div>
+
+                      <div className="row saldo-row">
+                        <div className="label">SALDO</div>
+                        <div className={`value saldo ${saldo < 0 ? "neg" : "pos"}`}>
+                          {formatValue(saldo)}
+                        </div>
+                      </div>
+                      
+                      {/* Detalhamento por centro */}
+                      <details style={{ marginTop: 12, fontSize: "0.85em" }}>
+                        <summary style={{ cursor: "pointer", color: "#666" }}>
+                          Ver detalhes por centro
+                        </summary>
+                        <div style={{ marginTop: 8, maxHeight: 150, overflow: "auto" }}>
+                          {cat.centros.map(centro => (
+                            <div key={centro.codigo || centro.nome} style={{ 
+                              padding: "4px 0", 
+                              borderBottom: "1px solid #eee",
+                              display: "flex",
+                              justifyContent: "space-between"
+                            }}>
+                              <span>{centro.codigo ? `${centro.codigo} - ` : ""}{centro.nome}</span>
+                              <span style={{ color: centro.receita - centro.custos >= 0 ? "green" : "red" }}>
+                                {formatValue(centro.receita - centro.custos)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             /* RELATÓRIO POR CENTRO ESPECÍFICO */
@@ -999,34 +1076,12 @@ export default function App() {
             <div style={{ marginTop: 18 }}>
               <div style={{ fontWeight: 700, textAlign: "right", color: "var(--accent)" }}>
                 {(() => {
+                  const consolidatedData = getConsolidatedData();
                   let totalRec = 0, totalCustos = 0;
                   
-                  // Soma todos os valores de todos os centros
-                  costCenters.forEach(cc => {
-                    const ccId = String(cc.idcentrocusto);
-                    const ccCategories = categoriesByCC[ccId] || {};
-                    
-                    Object.values(ccCategories).forEach(cat => {
-                      (cat.agrupadorIds || []).forEach(aggId => {
-                        if (aggregators[aggId]) {
-                          const col = aggregators[aggId];
-                          const ids = col.id === "unassigned"
-                            ? Object.keys(accounts).filter(id => 
-                                Object.values(aggregators)
-                                  .filter(a => a.id !== "unassigned")
-                                  .every(a => !(a.accountIds || []).includes(id))
-                              )
-                            : (col.accountIds || []).filter(id => accounts[id]);
-                            
-                          ids.forEach(id => {
-                            const a = accounts[id];
-                            if (!a) return;
-                            if (a.sign === "+") totalRec += Number(a.valor || 0);
-                            else totalCustos += Number(a.valor || 0);
-                          });
-                        }
-                      });
-                    });
+                  consolidatedData.forEach(cat => {
+                    totalRec += cat.receita;
+                    totalCustos += cat.custos;
                   });
                   
                   const totalSaldo = totalRec - totalCustos;
@@ -1165,17 +1220,53 @@ export default function App() {
                 })()}`
             }
           </p>
+          <div style={{ marginTop: 16, color: "#666", fontSize: "0.9em" }}>
+            <strong>Categorias Globais Disponíveis:</strong>
+            <div style={{ marginTop: 8 }}>
+              {globalCategories.map(cat => (
+                <span key={cat.idcategoria} style={{ 
+                  display: "inline-block", 
+                  margin: "2px 4px", 
+                  padding: "2px 8px", 
+                  backgroundColor: "#f0f0f0", 
+                  borderRadius: 12,
+                  fontSize: "0.8em"
+                }}>
+                  {cat.nome}
+                </span>
+              ))}
+            </div>
+          </div>
           {loading && <p>Carregando...</p>}
         </div>
       )}
 
       {activeView === "import" && (
         <div className="report-list-view">
-          <h2>Importar balancete</h2>
-          <p style={{ marginBottom: 16, color: "#666" }}>
-            Selecione o período de importação na barra lateral e faça upload do arquivo Excel (.xls ou .xlsx).
-          </p>
-          {loading && <p>Processando...</p>}
+          <div style={{ textAlign: "center", padding: 40, color: "#666" }}>
+            <div style={{ fontSize: "4em", marginBottom: 16 }}>📊</div>
+            <h2>Importação de Balancetes</h2>
+            <p style={{ marginBottom: 20, maxWidth: 500, margin: "0 auto 20px" }}>
+              Configure o período e a empresa na barra lateral, depois selecione o arquivo Excel para importação.
+              O sistema detectará automaticamente o centro de custo e organizará as contas.
+            </p>
+            <div style={{ 
+              backgroundColor: "#f8f9fa", 
+              borderRadius: 8, 
+              padding: 20,
+              maxWidth: 600,
+              margin: "0 auto",
+              textAlign: "left"
+            }}>
+              <h4>Formato esperado do arquivo:</h4>
+              <ul style={{ margin: 0, paddingLeft: 20 }}>
+                <li>Arquivo Excel (.xls ou .xlsx)</li>
+                <li>Colunas: Código, Descrição, Débito, Crédito</li>
+                <li>Centro de custo identificado automaticamente</li>
+                <li>Valores em formato brasileiro (vírgula como decimal)</li>
+              </ul>
+            </div>
+          </div>
         </div>
       )}
     </div>
